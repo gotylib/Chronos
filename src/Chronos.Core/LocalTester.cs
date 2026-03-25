@@ -1,0 +1,333 @@
+using System.Diagnostics;
+using Docker.DotNet;
+using Docker.DotNet.Models;
+using Polly;
+
+namespace Chronos.Core;
+
+public sealed class TestOptions
+{
+    public TimeSpan StartupTimeout { get; set; } = TimeSpan.FromSeconds(60);
+    public bool RemoveAfterTest { get; set; } = true;
+    public bool ShowLogsOnFailure { get; set; } = true;
+    public string DockerComposeExecutable { get; set; } = "docker-compose";
+
+    // docker-compose project name is used for container label filtering
+    public string ProjectName { get; set; } = "chronos";
+    public bool RequireHealthChecksIfDefined { get; set; } = true;
+
+    // When true, writes progress/details to Console.
+    public bool Verbose { get; set; } = true;
+}
+
+public sealed class ContainerHealth
+{
+    public string Name { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string? HealthStatus { get; set; }
+    public bool IsHealthy { get; set; }
+    public string? Error { get; set; }
+}
+
+public sealed class TestResult
+{
+    public bool Success { get; set; }
+    public List<ContainerHealth> ContainerHealths { get; set; } = new();
+    public List<string> Errors { get; set; } = new();
+    public TimeSpan Duration { get; set; }
+    public string? Logs { get; set; }
+}
+
+public sealed class LocalTester
+{
+    private readonly DockerClient _docker;
+    private readonly string _composeFilePath;
+    private readonly string _composeWorkingDirectory;
+
+    public LocalTester(string composeFilePath)
+    {
+        _composeFilePath = composeFilePath;
+        _composeWorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(composeFilePath)) ?? Directory.GetCurrentDirectory();
+
+        _docker = new DockerClientConfiguration().CreateClient();
+    }
+
+    public async Task<TestResult> TestAsync(TestOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        options ??= new TestOptions();
+        var result = new TestResult();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            if (options.Verbose)
+                Console.WriteLine("🧪 docker-compose up -d (local test)...");
+
+            await RunComposeUpAsync(options, cancellationToken);
+
+            if (options.Verbose)
+                Console.WriteLine($"🕒 Waiting for compose containers (timeout: {options.StartupTimeout})...");
+
+            var ok = await WaitForContainersAsync(options, cancellationToken);
+
+            result.ContainerHealths = await GetContainerHealthsAsync(options, cancellationToken);
+            result.Success = ok && result.ContainerHealths.All(c => c.IsHealthy);
+
+            if (!result.Success && options.ShowLogsOnFailure)
+                result.Logs = await GetComposeLogsAsync(options, cancellationToken);
+
+            if (options.Verbose)
+            {
+                Console.WriteLine();
+                foreach (var health in result.ContainerHealths)
+                {
+                    var icon = health.IsHealthy ? "✅" : "❌";
+                    var extra = health.HealthStatus != null ? $" (health: {health.HealthStatus})" : "";
+                    Console.WriteLine($"{icon} {health.Name}: {health.Status}{extra}");
+                    if (!string.IsNullOrWhiteSpace(health.Error))
+                        Console.WriteLine($"   Error: {health.Error}");
+                }
+
+                Console.WriteLine(result.Success ? "✅ Test passed." : "❌ Test failed.");
+
+                if (!result.Success && !string.IsNullOrWhiteSpace(result.Logs))
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("---- compose logs (tail) ----");
+                    Console.WriteLine(result.Logs);
+                    Console.WriteLine("------------------------------");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Success = false;
+            result.Errors.Add(ex.ToString());
+
+            if (options.ShowLogsOnFailure)
+            {
+                try
+                {
+                    result.Logs = await GetComposeLogsAsync(options, cancellationToken);
+                }
+                catch
+                {
+                    // best-effort
+                }
+            }
+
+            if (options.Verbose)
+            {
+                Console.WriteLine();
+                Console.WriteLine("❌ Local test threw an exception.");
+                Console.WriteLine(ex.ToString());
+
+                if (!string.IsNullOrWhiteSpace(result.Logs))
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("---- compose logs (tail) ----");
+                    Console.WriteLine(result.Logs);
+                    Console.WriteLine("------------------------------");
+                }
+            }
+        }
+        finally
+        {
+            sw.Stop();
+            result.Duration = sw.Elapsed;
+
+            if (options.RemoveAfterTest)
+            {
+                try { await RunComposeDownAsync(options, cancellationToken); }
+                catch { /* best-effort cleanup */ }
+            }
+        }
+
+        return result;
+    }
+
+    public async Task StopAsync(string projectName, bool removeVolumes = false, string? dockerComposeExecutable = null, CancellationToken cancellationToken = default)
+    {
+        var exec = dockerComposeExecutable ?? "docker-compose";
+        var args = $"-f \"{_composeFilePath}\" -p {projectName} down";
+        if (removeVolumes)
+            args += " -v";
+
+        Console.WriteLine($"🛑 Stopping compose project '{projectName}'...");
+        await RunProcessAsync(exec, args, cancellationToken);
+        Console.WriteLine("🛑 Stop finished.");
+    }
+
+    private Task RunComposeUpAsync(TestOptions options, CancellationToken ct)
+    {
+        var args = $"-f \"{_composeFilePath}\" -p {options.ProjectName} up -d";
+        return RunProcessAsync(options.DockerComposeExecutable, args, ct);
+    }
+
+    private Task RunComposeDownAsync(TestOptions options, CancellationToken ct)
+    {
+        var args = $"-f \"{_composeFilePath}\" -p {options.ProjectName} down -v";
+        return RunProcessAsync(options.DockerComposeExecutable, args, ct);
+    }
+
+    private async Task<bool> WaitForContainersAsync(TestOptions options, CancellationToken ct)
+    {
+        var retryPolicy = Policy
+            .Handle<Exception>()
+            .WaitAndRetryAsync(
+                retryCount: (int)Math.Max(1, Math.Ceiling(options.StartupTimeout.TotalSeconds / 2)),
+                sleepDurationProvider: _ => TimeSpan.FromSeconds(2));
+
+        return await retryPolicy.ExecuteAsync(async () =>
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var containers = await GetComposeContainersAsync(options, ct);
+            if (containers.Count == 0)
+                return false;
+
+            var allOk = true;
+            foreach (var container in containers)
+            {
+                var inspect = await _docker.Containers.InspectContainerAsync(container.ID, ct);
+
+                var running = string.Equals(inspect.State?.Status, "running", StringComparison.OrdinalIgnoreCase);
+                if (!running)
+                {
+                    allOk = false;
+                    break;
+                }
+
+                var health = inspect.State?.Health;
+                if (health != null && options.RequireHealthChecksIfDefined)
+                {
+                    if (!string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase))
+                    {
+                        allOk = false;
+                        break;
+                    }
+                }
+            }
+
+            return allOk;
+        });
+    }
+
+    private async Task<List<ContainerHealth>> GetContainerHealthsAsync(TestOptions options, CancellationToken ct)
+    {
+        var result = new List<ContainerHealth>();
+        var containers = await GetComposeContainersAsync(options, ct);
+
+        foreach (var container in containers)
+        {
+            var inspect = await _docker.Containers.InspectContainerAsync(container.ID, ct);
+            var health = inspect.State?.Health;
+
+            var name = container.Names?.FirstOrDefault()?.TrimStart('/') ?? container.ID;
+
+            var isRunning = string.Equals(inspect.State?.Status, "running", StringComparison.OrdinalIgnoreCase);
+            var isHealthy = isRunning;
+
+            string? error = null;
+            string? healthStatus = null;
+            if (health != null)
+            {
+                healthStatus = health.Status;
+                isHealthy = string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase);
+                error = health.Log?.LastOrDefault()?.Output;
+            }
+
+            result.Add(new ContainerHealth
+            {
+                Name = name,
+                Status = inspect.State?.Status ?? "unknown",
+                HealthStatus = healthStatus,
+                IsHealthy = isHealthy,
+                Error = string.IsNullOrWhiteSpace(error) ? null : error
+            });
+        }
+
+        return result;
+    }
+
+    private async Task<List<ContainerListResponse>> GetComposeContainersAsync(TestOptions options, CancellationToken ct)
+    {
+        var containers = await _docker.Containers.ListContainersAsync(new ContainersListParameters { All = true }, ct);
+
+        return containers
+            .Where(c =>
+                c.Labels != null &&
+                c.Labels.TryGetValue("com.docker.compose.project", out var project) &&
+                string.Equals(project, options.ProjectName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private Task<string> GetComposeLogsAsync(TestOptions options, CancellationToken ct)
+    {
+        var args = $"-f \"{_composeFilePath}\" -p {options.ProjectName} logs --tail=100";
+        return RunProcessCaptureOutputAsync(options.DockerComposeExecutable, args, ct);
+    }
+
+    private async Task RunProcessAsync(string fileName, string args, CancellationToken ct)
+    {
+        Console.WriteLine($"[docker-compose cmd] {fileName} {args}");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = args,
+            WorkingDirectory = _composeWorkingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        process.Start();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        await process.WaitForExitAsync(ct);
+
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"Command '{fileName} {args}' failed (exit code {process.ExitCode}). {stderr}");
+
+        _ = await stdoutTask;
+    }
+
+    private async Task<string> RunProcessCaptureOutputAsync(string fileName, string args, CancellationToken ct)
+    {
+        Console.WriteLine($"[docker-compose cmd] {fileName} {args}");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = args,
+            WorkingDirectory = _composeWorkingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new Process { StartInfo = psi };
+        process.Start();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        await process.WaitForExitAsync(ct);
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"Command '{fileName} {args}' failed (exit code {process.ExitCode}). {stderr}");
+
+        return stdout;
+    }
+}
+
