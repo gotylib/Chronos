@@ -1,4 +1,6 @@
+using System.IO;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 
 namespace Chronos.Core;
@@ -262,6 +264,160 @@ public sealed class HttpDeployAgent : IDeployAgent
             throw new InvalidOperationException($"Agent logs project failed ({(int)response.StatusCode}). {text}");
 
         return text;
+    }
+
+    public async Task UploadManifestJsonAsync(string projectName, string manifestJson, CancellationToken cancellationToken = default)
+    {
+        using var content = new StringContent(manifestJson, Encoding.UTF8, "application/json");
+        using var response = await _http.PostAsync(
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/chronos/manifest",
+            content,
+            cancellationToken).ConfigureAwait(false);
+
+        var responseText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent chronos manifest failed ({(int)response.StatusCode}). {responseText}");
+    }
+
+    public async Task UploadArtifactsTarAsync(
+        string projectName,
+        IReadOnlyList<DeployArtifact> artifacts,
+        CancellationToken cancellationToken = default)
+    {
+        if (artifacts.Count == 0)
+            return;
+
+        var temp = Path.Combine(Path.GetTempPath(), $"chronos-artifacts-{Guid.NewGuid():N}.tar");
+        try
+        {
+            await using (var fs = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20,
+                         options: FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await DeployArtifactTarWriter.WriteArtifactsAsync(artifacts, fs, cancellationToken).ConfigureAwait(false);
+            }
+
+            await using var upload = new FileStream(temp, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var form = new MultipartFormDataContent();
+            form.Add(new StreamContent(upload), "archive", "artifacts.tar");
+
+            using var response = await _http.PostAsync(
+                $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/chronos/artifacts",
+                form,
+                cancellationToken).ConfigureAwait(false);
+
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Agent chronos artifacts failed ({(int)response.StatusCode}). {responseText}");
+        }
+        finally
+        {
+            try { File.Delete(temp); }
+            catch { /* best-effort */ }
+        }
+    }
+
+    public async Task<DiagnosticsSnapshot> GetDiagnosticsAsync(string projectName, CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync(
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/chronos/diagnostics",
+            cancellationToken).ConfigureAwait(false);
+
+        var responseText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent chronos diagnostics failed ({(int)response.StatusCode}). {responseText}");
+
+        return JsonSerializer.Deserialize<DiagnosticsSnapshot>(responseText, ManifestJson.Options)
+               ?? new DiagnosticsSnapshot();
+    }
+
+    public async Task SnapshotVolumeToFileAsync(
+        string projectName,
+        string volumeName,
+        string localFilePath,
+        string compress = "gzip",
+        CancellationToken cancellationToken = default)
+    {
+        var url =
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/volumes/{Uri.EscapeDataString(volumeName)}/snapshot?compress={Uri.EscapeDataString(compress)}";
+
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException($"Agent volume snapshot failed ({(int)response.StatusCode}). {err}");
+        }
+
+        await using var httpStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var fs = new FileStream(localFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await httpStream.CopyToAsync(fs, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VolumeOperationResult> SnapshotVolumeUploadToUrlAsync(
+        string projectName,
+        string volumeName,
+        VolumeSnapshotUploadRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(request, ManifestJson.Options), Encoding.UTF8, "application/json");
+        using var response = await _http.PostAsync(
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/volumes/{Uri.EscapeDataString(volumeName)}/snapshot/upload",
+            content,
+            cancellationToken).ConfigureAwait(false);
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent volume snapshot upload failed ({(int)response.StatusCode}). {text}");
+
+        return JsonSerializer.Deserialize<VolumeOperationResult>(text, ManifestJson.Options)
+               ?? new VolumeOperationResult { Success = false, Error = "Empty response" };
+    }
+
+    public async Task<VolumeOperationResult> RestoreVolumeFromFileAsync(
+        string projectName,
+        string volumeName,
+        string localArchivePath,
+        string compress = "gzip",
+        CancellationToken cancellationToken = default)
+    {
+        await using var fs = new FileStream(localArchivePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 20,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StreamContent(fs), "archive", Path.GetFileName(localArchivePath));
+
+        var url =
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/volumes/{Uri.EscapeDataString(volumeName)}/restore?compress={Uri.EscapeDataString(compress)}";
+
+        using var response = await _http.PostAsync(url, form, cancellationToken).ConfigureAwait(false);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent volume restore failed ({(int)response.StatusCode}). {text}");
+
+        return JsonSerializer.Deserialize<VolumeOperationResult>(text, ManifestJson.Options)
+               ?? new VolumeOperationResult { Success = false, Error = "Empty response" };
+    }
+
+    public async Task<VolumeOperationResult> RestoreVolumeFromUrlAsync(
+        string projectName,
+        string volumeName,
+        VolumeRestoreFromUrlRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(request, ManifestJson.Options), Encoding.UTF8, "application/json");
+        using var response = await _http.PostAsync(
+            $"{_agentUrl}/projects/{Uri.EscapeDataString(projectName)}/volumes/{Uri.EscapeDataString(volumeName)}/restore-url",
+            content,
+            cancellationToken).ConfigureAwait(false);
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent volume restore-url failed ({(int)response.StatusCode}). {text}");
+
+        return JsonSerializer.Deserialize<VolumeOperationResult>(text, ManifestJson.Options)
+               ?? new VolumeOperationResult { Success = false, Error = "Empty response" };
     }
 }
 

@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -195,6 +197,45 @@ public sealed class ServiceBuilder
         return this;
     }
 
+    public ServiceBuilder AddCheck(DeclarativeCheck check)
+    {
+        if (check == null) throw new ArgumentNullException(nameof(check));
+        _service.Checks.Add(check);
+        return this;
+    }
+
+    public ServiceBuilder UseChecks(params DeclarativeCheck[] checks)
+    {
+        foreach (var t in checks)
+            _service.Checks.Add(t);
+        return this;
+    }
+
+    public ServiceBuilder AddJob(JobDefinition job)
+    {
+        if (job == null) throw new ArgumentNullException(nameof(job));
+        _service.Jobs.Add(job);
+        return this;
+    }
+
+    public ServiceBuilder UseJobs(params JobDefinition[] jobs)
+    {
+        foreach (var j in jobs)
+            _service.Jobs.Add(j);
+        return this;
+    }
+
+    /// <summary>Класс с методами, помеченными <see cref="TestAttribute"/> (ваша логика в коде).</summary>
+    public ServiceBuilder UseTests(params Type[] testClasses)
+    {
+        ArgumentNullException.ThrowIfNull(testClasses);
+        foreach (var t in testClasses)
+            CodeTestRegistration.AddTestsFromType(_service, t);
+        return this;
+    }
+
+    public ServiceBuilder UseTests<TTests>() => UseTests(typeof(TTests));
+
     public Service Build()
     {
         if (string.IsNullOrWhiteSpace(_service.Name))
@@ -216,6 +257,7 @@ public sealed class ComposeBuilder
     private readonly Dictionary<string, Secret> _secrets = new();
     private readonly Dictionary<string, Config> _configs = new();
     private readonly Dictionary<string, object> _xFields = new();
+    private readonly List<DeployArtifact> _deployArtifacts = new();
 
     // local runtime settings (NOT used by agent remote endpoints)
     private string _composeFilePath = "docker-compose.yml";
@@ -301,6 +343,105 @@ public sealed class ComposeBuilder
     {
         _xFields[key] = value;
         return this;
+    }
+
+    /// <summary>Ship a file next to compose on the agent (packed into a tar upload on publish).</summary>
+    public ComposeBuilder AddDeployArtifactFromFile(string deployRelativePath, string sourceFilePath, int? unixFileMode = null)
+    {
+        if (string.IsNullOrWhiteSpace(deployRelativePath)) throw new ArgumentException("Relative path is required.", nameof(deployRelativePath));
+        if (string.IsNullOrWhiteSpace(sourceFilePath)) throw new ArgumentException("Source path is required.", nameof(sourceFilePath));
+
+        _deployArtifacts.Add(new DeployArtifact
+        {
+            RelativePath = deployRelativePath,
+            SourceKind = ArtifactSourceKind.File,
+            SourcePathOnDisk = Path.GetFullPath(sourceFilePath),
+            UnixFileMode = unixFileMode
+        });
+        return this;
+    }
+
+    /// <summary>Ship a directory tree under <paramref name="deployRelativePath"/>.</summary>
+    public ComposeBuilder AddDeployArtifactFromDirectory(string deployRelativePath, string sourceDirectoryPath, int? unixFileMode = null)
+    {
+        if (string.IsNullOrWhiteSpace(deployRelativePath)) throw new ArgumentException("Relative path is required.", nameof(deployRelativePath));
+        if (string.IsNullOrWhiteSpace(sourceDirectoryPath)) throw new ArgumentException("Source path is required.", nameof(sourceDirectoryPath));
+
+        _deployArtifacts.Add(new DeployArtifact
+        {
+            RelativePath = deployRelativePath,
+            SourceKind = ArtifactSourceKind.Directory,
+            SourcePathOnDisk = Path.GetFullPath(sourceDirectoryPath),
+            UnixFileMode = unixFileMode
+        });
+        return this;
+    }
+
+    public ProjectManifest BuildManifest()
+    {
+        var manifest = new ProjectManifest();
+        foreach (var svc in _services.Values)
+        {
+            if (svc.Checks.Count == 0 && svc.Jobs.Count == 0 && svc.CodeTests.Count == 0)
+                continue;
+
+            manifest.Services[svc.Name] = new ManifestServiceSection
+            {
+                Tests = svc.Checks.ToList(),
+                Jobs = svc.Jobs.ToList(),
+                CodeTests = svc.CodeTests.ToList()
+            };
+        }
+
+        return manifest;
+    }
+
+    public string SerializeManifestJson()
+    {
+        var manifest = BuildManifest();
+        return JsonSerializer.Serialize(manifest, ManifestJson.Options);
+    }
+
+    public bool HasManifestPayload() =>
+        _services.Values.Any(s => s.Checks.Count > 0 || s.Jobs.Count > 0 || s.CodeTests.Count > 0);
+
+    public IReadOnlyList<DeployArtifact> GetDeployArtifacts() => _deployArtifacts;
+
+    private Dictionary<string, List<DeclarativeCheck>> BuildStartupChecksMap()
+    {
+        var d = new Dictionary<string, List<DeclarativeCheck>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in _services.Values)
+        {
+            var list = s.Checks.Where(t => t.OnStartup).ToList();
+            if (list.Count > 0)
+                d[s.Name] = list;
+        }
+
+        return d;
+    }
+
+    private void ApplyChecksToOptions(TestOptions options)
+    {
+        var map = BuildStartupChecksMap();
+        if (map.Count > 0)
+            options.DeclarativeChecksByService = map;
+
+        var codeMap = BuildStartupCodeTestsMap();
+        if (codeMap.Count > 0)
+            options.CodeTestsByService = codeMap;
+    }
+
+    private Dictionary<string, List<CodeTestEntry>> BuildStartupCodeTestsMap()
+    {
+        var d = new Dictionary<string, List<CodeTestEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in _services.Values)
+        {
+            var list = s.CodeTests.Where(c => c.OnStartup).ToList();
+            if (list.Count > 0)
+                d[s.Name] = list;
+        }
+
+        return d;
     }
 
     private ComposeDefinition BuildDefinition()
@@ -406,6 +547,7 @@ public sealed class ComposeBuilder
         options.ProjectName = projectName;
         options.DockerComposeExecutable = dockerComposeExecutable;
         options.RemoveAfterTest = false;
+        ApplyChecksToOptions(options);
 
         Console.WriteLine($"[Start] docker-compose up -d (project '{projectName}')...");
         var tester = new LocalTester(composeFilePath);
@@ -457,6 +599,7 @@ public sealed class ComposeBuilder
         options.ProjectName = projectName;
         options.DockerComposeExecutable = dockerComposeExecutable;
         // keep caller's RemoveAfterTest
+        ApplyChecksToOptions(options);
 
         Console.WriteLine($"[Test] Running local test (project '{projectName}')...");
         var tester = new LocalTester(composeFilePath);
@@ -482,7 +625,113 @@ public sealed class ComposeBuilder
         var composeYaml = GenerateYaml();
         Console.WriteLine($"[Publish] Sending compose YAML to agent project '{_projectName}'...");
         var agent = new HttpDeployAgent(agentUrl, apiKey);
-        return await agent.StartProjectAsync(_projectName, composeYaml, cancellationToken);
+        var result = await agent.StartProjectAsync(_projectName, composeYaml, cancellationToken);
+        if (!result.Success)
+            return result;
+
+        try
+        {
+            await PushManifestAndArtifactsAsync(agent, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new DeployResult
+            {
+                Success = false,
+                Error = $"Compose started but manifest/artifacts upload failed: {ex.Message}",
+                Containers = result.Containers
+            };
+        }
+
+        return result;
+    }
+
+    public async Task PushManifestAndArtifactsAsync(string agentUrl, string? apiKey = null, CancellationToken cancellationToken = default)
+    {
+        var agent = new HttpDeployAgent(agentUrl, apiKey);
+        await PushManifestAndArtifactsAsync(agent, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PushManifestAndArtifactsAsync(HttpDeployAgent agent, CancellationToken cancellationToken)
+    {
+        if (HasManifestPayload())
+        {
+            var json = SerializeManifestJson();
+            await agent.UploadManifestJsonAsync(_projectName, json, cancellationToken).ConfigureAwait(false);
+        }
+
+        var artifacts = EnumerateAllDeployArtifacts().ToList();
+        if (artifacts.Count > 0)
+            await agent.UploadArtifactsTarAsync(_projectName, artifacts, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IEnumerable<DeployArtifact> EnumerateAllDeployArtifacts()
+    {
+        foreach (var a in _deployArtifacts)
+            yield return a;
+
+        foreach (var svc in _services.Values)
+        {
+            foreach (var c in svc.CodeTests)
+            {
+                if (string.IsNullOrWhiteSpace(c.LocalAssemblyPath))
+                    continue;
+
+                yield return new DeployArtifact
+                {
+                    RelativePath = c.AssemblyRelativePath,
+                    SourceKind = ArtifactSourceKind.File,
+                    SourcePathOnDisk = Path.GetFullPath(c.LocalAssemblyPath!)
+                };
+            }
+        }
+    }
+
+    /// <summary>Stream volume snapshot from agent to a local file (docker stdout → tar, low RAM use).</summary>
+    public Task SnapshotRemoteVolumeToFileAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        string localFilePath,
+        string? apiKey = null,
+        string compress = "gzip",
+        CancellationToken cancellationToken = default)
+    {
+        var agent = new HttpDeployAgent(agentUrl, apiKey);
+        return agent.SnapshotVolumeToFileAsync(_projectName, dockerVolumeName, localFilePath, compress, cancellationToken);
+    }
+
+    public Task<VolumeOperationResult> SnapshotRemoteVolumeUploadToUrlAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        VolumeSnapshotUploadRequest request,
+        string? apiKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        var agent = new HttpDeployAgent(agentUrl, apiKey);
+        return agent.SnapshotVolumeUploadToUrlAsync(_projectName, dockerVolumeName, request, cancellationToken);
+    }
+
+    public Task<VolumeOperationResult> RestoreRemoteVolumeFromFileAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        string localArchivePath,
+        string? apiKey = null,
+        string compress = "gzip",
+        CancellationToken cancellationToken = default)
+    {
+        var agent = new HttpDeployAgent(agentUrl, apiKey);
+        return agent.RestoreVolumeFromFileAsync(_projectName, dockerVolumeName, localArchivePath, compress, cancellationToken);
+    }
+
+    public Task<VolumeOperationResult> RestoreRemoteVolumeFromUrlAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        VolumeRestoreFromUrlRequest request,
+        string? apiKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        var agent = new HttpDeployAgent(agentUrl, apiKey);
+        return agent.RestoreVolumeFromUrlAsync(_projectName, dockerVolumeName, request, cancellationToken);
     }
 
     public async Task<DeployResult> StartRemoteAsync(string agentUrl, string? apiKey = null, CancellationToken cancellationToken = default)

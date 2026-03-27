@@ -11,13 +11,15 @@ public sealed class TestOptions
     public bool RemoveAfterTest { get; set; } = true;
     public bool ShowLogsOnFailure { get; set; } = true;
     public string DockerComposeExecutable { get; set; } = "docker-compose";
-
-    // docker-compose project name is used for container label filtering
     public string ProjectName { get; set; } = "chronos";
     public bool RequireHealthChecksIfDefined { get; set; } = true;
-
-    // When true, writes progress/details to Console.
     public bool Verbose { get; set; } = true;
+
+    /// <summary>После health: декларативные проверки (<see cref="DeclarativeCheck.OnStartup"/>).</summary>
+    public bool RunStartupChecks { get; set; } = true;
+
+    public Dictionary<string, List<DeclarativeCheck>>? DeclarativeChecksByService { get; set; }
+    public Dictionary<string, List<CodeTestEntry>>? CodeTestsByService { get; set; }
 }
 
 public sealed class ContainerHealth
@@ -36,6 +38,7 @@ public sealed class TestResult
     public List<string> Errors { get; set; } = new();
     public TimeSpan Duration { get; set; }
     public string? Logs { get; set; }
+    public List<CheckRunRecord> CheckRuns { get; set; } = new();
 }
 
 public sealed class LocalTester
@@ -72,6 +75,20 @@ public sealed class LocalTester
 
             result.ContainerHealths = await GetContainerHealthsAsync(options, cancellationToken);
             result.Success = ok && result.ContainerHealths.All(c => c.IsHealthy);
+
+            if (result.Success &&
+                options.RunStartupChecks &&
+                options.DeclarativeChecksByService is { Count: > 0 })
+            {
+                await RunStartupDeclarativeChecksAsync(result, options, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (result.Success &&
+                options.RunStartupChecks &&
+                options.CodeTestsByService is { Count: > 0 })
+            {
+                await RunStartupCodeTestsAsync(result, options, cancellationToken).ConfigureAwait(false);
+            }
 
             if (!result.Success && options.ShowLogsOnFailure)
                 result.Logs = await GetComposeLogsAsync(options, cancellationToken);
@@ -329,5 +346,77 @@ public sealed class LocalTester
 
         return stdout;
     }
-}
 
+    private async Task RunStartupDeclarativeChecksAsync(TestResult result, TestOptions options, CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        var composeFileName = Path.GetFileName(_composeFilePath);
+
+        foreach (var kv in options.DeclarativeChecksByService!)
+        {
+            var serviceName = kv.Key;
+            foreach (var test in kv.Value)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rec = await DeclarativeCheckRunner.RunCheckAsync(
+                    test,
+                    serviceName,
+                    _composeWorkingDirectory,
+                    composeFileName,
+                    options.ProjectName,
+                    options.DockerComposeExecutable,
+                    http,
+                    cancellationToken).ConfigureAwait(false);
+
+                result.CheckRuns.Add(rec);
+
+                if (!rec.Success && test.Criticality == TestCriticality.Critical)
+                    result.Success = false;
+
+                if (options.Verbose)
+                {
+                    var sev = rec.Success ? "ok" : test.Criticality.ToString();
+                    Console.WriteLine(rec.Success
+                        ? $"[check] {serviceName}/{rec.TestId}: {sev}"
+                        : $"[check] {serviceName}/{rec.TestId}: FAIL ({test.Criticality}) — {rec.Message}");
+                }
+            }
+        }
+    }
+
+    private async Task RunStartupCodeTestsAsync(TestResult result, TestOptions options, CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        var composeFileName = Path.GetFileName(_composeFilePath);
+
+        foreach (var kv in options.CodeTestsByService!)
+        {
+            var serviceName = kv.Key;
+            foreach (var def in kv.Value)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rec = await CodeTestRunner.RunAsync(
+                    def,
+                    serviceName,
+                    _composeWorkingDirectory,
+                    composeFileName,
+                    options.ProjectName,
+                    options.DockerComposeExecutable,
+                    http,
+                    cancellationToken).ConfigureAwait(false);
+
+                result.CheckRuns.Add(rec);
+
+                if (!rec.Success && def.Criticality == TestCriticality.Critical)
+                    result.Success = false;
+
+                if (options.Verbose)
+                {
+                    Console.WriteLine(rec.Success
+                        ? $"[test] {serviceName}/{rec.TestId}: ok"
+                        : $"[test] {serviceName}/{rec.TestId}: FAIL ({def.Criticality}) — {rec.Message}");
+                }
+            }
+        }
+    }
+}

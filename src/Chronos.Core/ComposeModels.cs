@@ -43,6 +43,15 @@ public sealed class Service
 
     public bool Init { get; set; } = true;
     public bool Privileged { get; set; } = false;
+
+    /// <summary>Декларативные проверки (HTTP/exec), см. <see cref="ServiceBuilder.UseChecks"/>.</summary>
+    public List<DeclarativeCheck> Checks { get; } = new();
+
+    /// <summary>Периодические задания на агенте.</summary>
+    public List<JobDefinition> Jobs { get; } = new();
+
+    /// <summary>Методы с <see cref="TestAttribute"/>, см. <see cref="ServiceBuilder.UseTests(System.Type[])"/>.</summary>
+    public List<CodeTestEntry> CodeTests { get; } = new();
 }
 
 public sealed class PortMapping

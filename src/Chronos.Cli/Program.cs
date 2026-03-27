@@ -1,5 +1,6 @@
 using System.Globalization;
 using Chronos.Core;
+using SampleTests;
 using Spectre.Console;
 
 static string? GetArgValue(string[] argv, string name)
@@ -95,7 +96,8 @@ static ComposeBuilder CreateSample(string sample)
                 .UseImage("nginx:alpine")
                 .AddPort(8080, 80)
                 .ConnectToNetwork("web-net")
-                .WithRestartPolicy("unless-stopped")),
+                .WithRestartPolicy("unless-stopped")
+                .UseTests<NginxTest>()),
 
         "pg-nginx" => new ComposeBuilder()
             .WithVersion("3.8")
@@ -122,7 +124,8 @@ static ComposeBuilder CreateSample(string sample)
                 .WithRestartPolicy("unless-stopped")
                 .AddPort(8080, 80)
                 .ConnectToNetwork("app-net")
-                .DependsOn("postgres")),
+                .DependsOn("postgres")
+                .UseTests<NginxTest>()),
 
         _ => throw new InvalidOperationException($"Unknown sample '{sample}'. Supported: nginx, pg-nginx")
     };

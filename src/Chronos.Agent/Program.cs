@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Chronos.Agent;
 using Chronos.Core;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,11 +10,31 @@ var builder = WebApplication.CreateBuilder(args);
 var appPath = builder.Configuration["CHRONOS_AGENT_APP_PATH"] ?? "/app";
 var composeFileName = builder.Configuration["CHRONOS_AGENT_COMPOSE_FILE"] ?? "docker-compose.yml";
 var dockerComposeExecutable = builder.Configuration["CHRONOS_AGENT_DOCKER_COMPOSE_EXECUTABLE"] ?? "docker-compose";
+var dockerExecutable = builder.Configuration["CHRONOS_AGENT_DOCKER_EXECUTABLE"] ?? "docker";
+var archiveImage = builder.Configuration["CHRONOS_AGENT_ARCHIVE_IMAGE"] ?? "alpine:latest";
 var expectedApiKey = builder.Configuration["CHRONOS_AGENT_API_KEY"];
 
+var agentPaths = new AgentPaths
+{
+    AppPath = appPath,
+    ComposeFileName = composeFileName,
+    DockerComposeExecutable = dockerComposeExecutable,
+    DockerExecutable = dockerExecutable,
+    ArchiveImage = archiveImage
+};
+
+builder.Services.AddSingleton(agentPaths);
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(nameof(AgentRoutes));
+builder.Services.AddHttpClient(nameof(SchedulerHostedService));
+builder.Services.AddHostedService<SchedulerHostedService>();
+
 var deploymentLock = new SemaphoreSlim(1, 1);
+var volumeLock = new SemaphoreSlim(2, 2);
 
 var app = builder.Build();
+
+AgentRoutes.MapAgentRoutes(app, agentPaths, expectedApiKey, deploymentLock, volumeLock);
 
 app.MapGet("/", () => "Chronos agent is running.");
 
@@ -333,6 +354,7 @@ app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequ
         }
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
         return Results.Json(status);
     }
@@ -430,6 +452,7 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
         }
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
         return Results.Json(status);
     }
