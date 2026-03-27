@@ -1,254 +1,14 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Chronos.Core.Compose.Interfaces;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace Chronos.Core;
+namespace Chronos.Core.Compose.Implementation;
 
-public sealed class ComposeDefinition
-{
-    public string Version { get; init; } = "3.8";
-    public IReadOnlyDictionary<string, Service> Services { get; init; } = new Dictionary<string, Service>();
-    public IReadOnlyDictionary<string, Network> Networks { get; init; } = new Dictionary<string, Network>();
-    public IReadOnlyDictionary<string, Volume> Volumes { get; init; } = new Dictionary<string, Volume>();
-    public IReadOnlyDictionary<string, Secret> Secrets { get; init; } = new Dictionary<string, Secret>();
-    public IReadOnlyDictionary<string, Config> Configs { get; init; } = new Dictionary<string, Config>();
-    public IReadOnlyDictionary<string, object> ExtensionFields { get; init; } = new Dictionary<string, object>();
-}
-
-public sealed class ServiceBuilder
-{
-    private readonly Service _service = new();
-
-    public ServiceBuilder WithName(string name)
-    {
-        _service.Name = name;
-        return this;
-    }
-
-    public ServiceBuilder UseImage(string image)
-    {
-        _service.Image = image;
-        return this;
-    }
-
-    public ServiceBuilder BuildFrom(string contextPath, string? dockerfile = null)
-    {
-        _service.BuildContext = contextPath;
-        _service.Dockerfile = dockerfile;
-        return this;
-    }
-
-    public ServiceBuilder WithContainerName(string name)
-    {
-        _service.ContainerName = name;
-        return this;
-    }
-
-    public ServiceBuilder WithCommand(params string[] command)
-    {
-        _service.Command.AddRange(command.Where(c => !string.IsNullOrWhiteSpace(c)));
-        return this;
-    }
-
-    public ServiceBuilder AddPort(int hostPort, int containerPort, string protocol = "tcp")
-        => AddPort("0.0.0.0", hostPort, containerPort, protocol);
-
-    public ServiceBuilder AddPort(string host, int hostPort, int containerPort, string protocol = "tcp")
-    {
-        _service.Ports.Add(new PortMapping
-        {
-            Host = host,
-            HostPort = hostPort,
-            ContainerPort = containerPort,
-            Protocol = protocol
-        });
-        return this;
-    }
-
-    public ServiceBuilder AddEnvironment(string key, string value)
-    {
-        _service.Environment[key] = value;
-        return this;
-    }
-
-    public ServiceBuilder AddEnvironment(Dictionary<string, string> env)
-    {
-        foreach (var kv in env)
-            _service.Environment[kv.Key] = kv.Value;
-        return this;
-    }
-
-    public ServiceBuilder AddEnvironmentFile(string filePath)
-    {
-        _service.EnvFiles.Add(filePath);
-        return this;
-    }
-
-    public ServiceBuilder AddLabel(string key, string value)
-    {
-        _service.Labels[key] = value;
-        return this;
-    }
-
-    public ServiceBuilder DependsOn(params string[] services)
-    {
-        _service.DependsOn.AddRange(services.Where(s => !string.IsNullOrWhiteSpace(s)));
-        return this;
-    }
-
-    public ServiceBuilder ConnectToNetwork(string network)
-    {
-        _service.Networks.Add(network);
-        return this;
-    }
-
-    public ServiceBuilder AddVolume(string source, string target, string mode = "rw")
-    {
-        _service.Volumes.Add($"{source}:{target}:{mode}");
-        return this;
-    }
-
-    public ServiceBuilder AddSecret(string secretName)
-    {
-        _service.Secrets.Add(secretName);
-        return this;
-    }
-
-    public ServiceBuilder WithHealthCheck(string testCommand, int intervalSeconds = 30, int timeoutSeconds = 10, int retries = 3)
-    {
-        _service.HealthCheck = new HealthCheck
-        {
-            TestCommand = testCommand,
-            IntervalSeconds = intervalSeconds,
-            TimeoutSeconds = timeoutSeconds,
-            Retries = retries
-        };
-        return this;
-    }
-
-    public ServiceBuilder WithRestartPolicy(string policy)
-    {
-        _service.RestartPolicy = policy;
-        return this;
-    }
-
-    public ServiceBuilder WithResources(decimal? cpus = null, int? memoryMb = null)
-    {
-        _service.Deploy ??= new DeployConfig();
-        _service.Deploy.Resources = new ResourceLimits { Cpus = cpus, MemoryMb = memoryMb };
-        return this;
-    }
-
-    public ServiceBuilder WithReplicas(int count)
-    {
-        _service.Deploy ??= new DeployConfig();
-        _service.Deploy.Replicas = count;
-        return this;
-    }
-
-    public ServiceBuilder WithUser(string user)
-    {
-        _service.User = user;
-        return this;
-    }
-
-    public ServiceBuilder WithWorkingDirectory(string path)
-    {
-        _service.WorkingDir = path;
-        return this;
-    }
-
-    public ServiceBuilder AddCapability(params string[] capabilities)
-    {
-        _service.Capabilities.AddRange(capabilities.Where(c => !string.IsNullOrWhiteSpace(c)));
-        return this;
-    }
-
-    public ServiceBuilder AddExtraHost(string hostname, string ip)
-    {
-        _service.ExtraHosts[hostname] = ip;
-        return this;
-    }
-
-    public ServiceBuilder WithLogging(string driver, Dictionary<string, string>? options = null)
-    {
-        _service.LoggingDriver = driver;
-        if (options != null)
-        {
-            foreach (var opt in options)
-                _service.LoggingOptions[opt.Key] = opt.Value;
-        }
-        return this;
-    }
-
-    public ServiceBuilder WithInit(bool init)
-    {
-        _service.Init = init;
-        return this;
-    }
-
-    public ServiceBuilder AsPrivileged(bool privileged = true)
-    {
-        _service.Privileged = privileged;
-        return this;
-    }
-
-    public ServiceBuilder AddCheck(DeclarativeCheck check)
-    {
-        if (check == null) throw new ArgumentNullException(nameof(check));
-        _service.Checks.Add(check);
-        return this;
-    }
-
-    public ServiceBuilder UseChecks(params DeclarativeCheck[] checks)
-    {
-        foreach (var t in checks)
-            _service.Checks.Add(t);
-        return this;
-    }
-
-    public ServiceBuilder AddJob(JobDefinition job)
-    {
-        if (job == null) throw new ArgumentNullException(nameof(job));
-        _service.Jobs.Add(job);
-        return this;
-    }
-
-    public ServiceBuilder UseJobs(params JobDefinition[] jobs)
-    {
-        foreach (var j in jobs)
-            _service.Jobs.Add(j);
-        return this;
-    }
-
-    /// <summary>Класс с методами, помеченными <see cref="TestAttribute"/> (ваша логика в коде).</summary>
-    public ServiceBuilder UseTests(params Type[] testClasses)
-    {
-        ArgumentNullException.ThrowIfNull(testClasses);
-        foreach (var t in testClasses)
-            CodeTestRegistration.AddTestsFromType(_service, t);
-        return this;
-    }
-
-    public ServiceBuilder UseTests<TTests>() => UseTests(typeof(TTests));
-
-    public Service Build()
-    {
-        if (string.IsNullOrWhiteSpace(_service.Name))
-            throw new InvalidOperationException("Service name is required.");
-
-        if (string.IsNullOrWhiteSpace(_service.Image) && string.IsNullOrWhiteSpace(_service.BuildContext))
-            throw new InvalidOperationException($"Service '{_service.Name}' must have either Image or Build context specified.");
-
-        return _service;
-    }
-}
-
-public sealed class ComposeBuilder
+public sealed class ComposeBuilder : IComposeBuilder
 {
     private string _version = "3.8";
     private readonly Dictionary<string, Service> _services = new();
@@ -262,7 +22,8 @@ public sealed class ComposeBuilder
     // local runtime settings (NOT used by agent remote endpoints)
     private string _composeFilePath = "docker-compose.yml";
     private string _projectName = "chronos";
-    private string _dockerComposeExecutable = "docker-compose";
+    /// <summary><c>auto</c> = detect <c>docker compose</c> vs <c>docker-compose</c> on this machine.</summary>
+    private string _dockerComposeExecutable = "auto";
 
     public ComposeBuilder WithVersion(string version)
     {
@@ -282,11 +43,19 @@ public sealed class ComposeBuilder
         return this;
     }
 
+    /// <param name="dockerComposeExecutable">Concrete CLI (e.g. <c>docker compose</c>, <c>docker-compose</c>) or <c>auto</c> to probe at runtime.</param>
     public ComposeBuilder WithDockerComposeExecutable(string dockerComposeExecutable)
     {
         _dockerComposeExecutable = dockerComposeExecutable ?? throw new ArgumentNullException(nameof(dockerComposeExecutable));
         return this;
     }
+
+    /// <summary>Forces Docker Compose V2 plugin spelling (<c>docker compose</c>).</summary>
+    public ComposeBuilder WithDockerComposeV2()
+        => WithDockerComposeExecutable("docker compose");
+
+    private string ResolvedDockerComposeExecutable()
+        => DockerComposeExecutableResolver.Resolve(_dockerComposeExecutable);
 
     public ComposeBuilder AddService(Service service)
     {
@@ -294,7 +63,7 @@ public sealed class ComposeBuilder
         return this;
     }
 
-    public ComposeBuilder AddService(Action<ServiceBuilder> configure)
+    public ComposeBuilder AddService(Action<IServiceBuilder> configure)
     {
         var builder = new ServiceBuilder();
         configure(builder);
@@ -382,14 +151,15 @@ public sealed class ComposeBuilder
         var manifest = new ProjectManifest();
         foreach (var svc in _services.Values)
         {
-            if (svc.Checks.Count == 0 && svc.Jobs.Count == 0 && svc.CodeTests.Count == 0)
+            if (svc.Checks.Count == 0 && svc.Jobs.Count == 0 && svc.CodeTests.Count == 0 && svc.CodeJobs.Count == 0)
                 continue;
 
             manifest.Services[svc.Name] = new ManifestServiceSection
             {
                 Tests = svc.Checks.ToList(),
                 Jobs = svc.Jobs.ToList(),
-                CodeTests = svc.CodeTests.ToList()
+                CodeTests = svc.CodeTests.ToList(),
+                CodeJobs = svc.CodeJobs.ToList()
             };
         }
 
@@ -403,7 +173,7 @@ public sealed class ComposeBuilder
     }
 
     public bool HasManifestPayload() =>
-        _services.Values.Any(s => s.Checks.Count > 0 || s.Jobs.Count > 0 || s.CodeTests.Count > 0);
+        _services.Values.Any(s => s.Checks.Count > 0 || s.Jobs.Count > 0 || s.CodeTests.Count > 0 || s.CodeJobs.Count > 0);
 
     public IReadOnlyList<DeployArtifact> GetDeployArtifacts() => _deployArtifacts;
 
@@ -545,7 +315,7 @@ public sealed class ComposeBuilder
 
         options ??= new TestOptions();
         options.ProjectName = projectName;
-        options.DockerComposeExecutable = dockerComposeExecutable;
+        options.DockerComposeExecutable = DockerComposeExecutableResolver.Resolve(dockerComposeExecutable);
         options.RemoveAfterTest = false;
         ApplyChecksToOptions(options);
 
@@ -555,24 +325,24 @@ public sealed class ComposeBuilder
     }
 
     public Task<TestResult> StartAsync(TestOptions? options = null, CancellationToken cancellationToken = default)
-        => StartAsync(_composeFilePath, _projectName, _dockerComposeExecutable, options, cancellationToken);
+        => StartAsync(_composeFilePath, _projectName, ResolvedDockerComposeExecutable(), options, cancellationToken);
 
     public async Task StopAsync(
         string composeFilePath,
         string projectName,
         bool removeVolumes = false,
-        string dockerComposeExecutable = "docker-compose",
+        string dockerComposeExecutable = "auto",
         CancellationToken cancellationToken = default)
     {
         Console.WriteLine($"[Stop] Writing compose to '{composeFilePath}' (for consistency)...");
         await SaveToFileAsync(composeFilePath, cancellationToken);
 
         var tester = new LocalTester(composeFilePath);
-        await tester.StopAsync(projectName, removeVolumes, dockerComposeExecutable, cancellationToken);
+        await tester.StopAsync(projectName, removeVolumes, DockerComposeExecutableResolver.Resolve(dockerComposeExecutable), cancellationToken);
     }
 
     public Task StopAsync(bool removeVolumes, CancellationToken cancellationToken = default)
-        => StopAsync(_composeFilePath, _projectName, removeVolumes, _dockerComposeExecutable, cancellationToken);
+        => StopAsync(_composeFilePath, _projectName, removeVolumes, ResolvedDockerComposeExecutable(), cancellationToken);
 
     public Task StopAsync(CancellationToken cancellationToken = default)
         => StopAsync(false, cancellationToken);
@@ -597,7 +367,7 @@ public sealed class ComposeBuilder
 
         options ??= new TestOptions();
         options.ProjectName = projectName;
-        options.DockerComposeExecutable = dockerComposeExecutable;
+        options.DockerComposeExecutable = DockerComposeExecutableResolver.Resolve(dockerComposeExecutable);
         // keep caller's RemoveAfterTest
         ApplyChecksToOptions(options);
 
@@ -607,7 +377,7 @@ public sealed class ComposeBuilder
     }
 
     public Task<TestResult> TestAsync(TestOptions? options = null, CancellationToken cancellationToken = default)
-        => TestAsync(_composeFilePath, _projectName, _dockerComposeExecutable, options, cancellationToken);
+        => TestAsync(_composeFilePath, _projectName, ResolvedDockerComposeExecutable(), options, cancellationToken);
 
     // ---------------- Remote API ----------------
 
@@ -644,6 +414,55 @@ public sealed class ComposeBuilder
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Deploy compose through Chronos.Master (smart agent selection).
+    /// </summary>
+    public async Task<ClusterDeployResult> DeployToClusterAsync(
+        string masterUrl,
+        string? apiKey = null,
+        string? preferredLocation = null,
+        CancellationToken cancellationToken = default)
+    {
+        Console.WriteLine("[Cluster Deploy] Validating compose...");
+        var validation = await ValidateAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!validation.IsValid)
+            throw new InvalidOperationException($"Cluster deploy aborted: {validation.Errors.Count} validation error(s).");
+
+        var client = new ClusterClient(masterUrl, apiKey);
+        var request = new ClusterDeployRequest
+        {
+            ProjectName = _projectName,
+            ComposeYaml = GenerateYaml(),
+            PreferredLocation = preferredLocation
+        };
+        return await client.DeployAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Publish compose + manifest through Chronos.Master.
+    /// </summary>
+    public async Task<ClusterDeployResult> PublishToClusterAsync(
+        string masterUrl,
+        string? apiKey = null,
+        string? preferredLocation = null,
+        CancellationToken cancellationToken = default)
+    {
+        Console.WriteLine("[Cluster Publish] Validating compose...");
+        var validation = await ValidateAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!validation.IsValid)
+            throw new InvalidOperationException($"Cluster publish aborted: {validation.Errors.Count} validation error(s).");
+
+        var client = new ClusterClient(masterUrl, apiKey);
+        var request = new ClusterDeployRequest
+        {
+            ProjectName = _projectName,
+            ComposeYaml = GenerateYaml(),
+            PreferredLocation = preferredLocation,
+            ManifestJson = HasManifestPayload() ? SerializeManifestJson() : null
+        };
+        return await client.PublishAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task PushManifestAndArtifactsAsync(string agentUrl, string? apiKey = null, CancellationToken cancellationToken = default)
@@ -684,6 +503,19 @@ public sealed class ComposeBuilder
                     SourcePathOnDisk = Path.GetFullPath(c.LocalAssemblyPath!)
                 };
             }
+
+            foreach (var j in svc.CodeJobs)
+            {
+                if (string.IsNullOrWhiteSpace(j.LocalAssemblyPath))
+                    continue;
+
+                yield return new DeployArtifact
+                {
+                    RelativePath = j.AssemblyRelativePath,
+                    SourceKind = ArtifactSourceKind.File,
+                    SourcePathOnDisk = Path.GetFullPath(j.LocalAssemblyPath!)
+                };
+            }
         }
     }
 
@@ -698,6 +530,62 @@ public sealed class ComposeBuilder
     {
         var agent = new HttpDeployAgent(agentUrl, apiKey);
         return agent.SnapshotVolumeToFileAsync(_projectName, dockerVolumeName, localFilePath, compress, cancellationToken);
+    }
+
+    /// <summary>
+    /// Convenience overload: stores snapshot into "./snapshots" with autogenerated filename.
+    /// Returns full path to created file.
+    /// </summary>
+    public Task<string> SnapshotRemoteVolumeToFileAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        string? apiKey = null,
+        string compress = "gzip",
+        CancellationToken cancellationToken = default)
+    {
+        var localDir = Path.Combine(Environment.CurrentDirectory, "snapshots");
+        return SnapshotRemoteVolumeToDirectoryAsync(
+            agentUrl: agentUrl,
+            dockerVolumeName: dockerVolumeName,
+            localDirectoryPath: localDir,
+            apiKey: apiKey,
+            compress: compress,
+            filePrefix: null,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Stream volume snapshot from agent to a local directory and auto-generate file name.
+    /// Returns full created file path.
+    /// </summary>
+    public async Task<string> SnapshotRemoteVolumeToDirectoryAsync(
+        string agentUrl,
+        string dockerVolumeName,
+        string localDirectoryPath,
+        string? apiKey = null,
+        string compress = "gzip",
+        string? filePrefix = null,
+        CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(localDirectoryPath);
+
+        var prefix = string.IsNullOrWhiteSpace(filePrefix) ? $"{_projectName}_{dockerVolumeName}" : filePrefix;
+        prefix = SanitizeFileNamePart(prefix);
+
+        var extension = string.Equals(compress, "none", StringComparison.OrdinalIgnoreCase) ? ".tar" : ".tar.gz";
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var fileName = $"{prefix}_{timestamp}{extension}";
+        var fullPath = Path.Combine(localDirectoryPath, fileName);
+
+        await SnapshotRemoteVolumeToFileAsync(
+            agentUrl: agentUrl,
+            dockerVolumeName: dockerVolumeName,
+            localFilePath: fullPath,
+            apiKey: apiKey,
+            compress: compress,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return fullPath;
     }
 
     public Task<VolumeOperationResult> SnapshotRemoteVolumeUploadToUrlAsync(
@@ -964,5 +852,77 @@ public sealed class ComposeBuilder
 
         return obj;
     }
-}
 
+    private static string SanitizeFileNamePart(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+            sb.Append(invalid.Contains(ch) ? '_' : ch);
+        return sb.ToString();
+    }
+
+    IComposeBuilder IComposeBuilder.WithVersion(string version) => WithVersion(version);
+    IComposeBuilder IComposeBuilder.WithComposeFilePath(string composeFilePath) => WithComposeFilePath(composeFilePath);
+    IComposeBuilder IComposeBuilder.WithProjectName(string projectName) => WithProjectName(projectName);
+    IComposeBuilder IComposeBuilder.WithDockerComposeExecutable(string dockerComposeExecutable) => WithDockerComposeExecutable(dockerComposeExecutable);
+    IComposeBuilder IComposeBuilder.WithDockerComposeV2() => WithDockerComposeV2();
+    IComposeBuilder IComposeBuilder.AddService(Service service) => AddService(service);
+    IComposeBuilder IComposeBuilder.AddService(Action<IServiceBuilder> configure) => AddService(configure);
+    IComposeBuilder IComposeBuilder.AddNetwork(Network network) => AddNetwork(network);
+    IComposeBuilder IComposeBuilder.AddNetwork(string name, string driver) => AddNetwork(name, driver);
+    IComposeBuilder IComposeBuilder.AddVolume(Volume volume) => AddVolume(volume);
+    IComposeBuilder IComposeBuilder.AddVolume(string name, string driver) => AddVolume(name, driver);
+    IComposeBuilder IComposeBuilder.AddSecret(Secret secret) => AddSecret(secret);
+    IComposeBuilder IComposeBuilder.AddConfig(Config config) => AddConfig(config);
+    IComposeBuilder IComposeBuilder.AddExtension(string key, object value) => AddExtension(key, value);
+    IComposeBuilder IComposeBuilder.AddDeployArtifactFromFile(string deployRelativePath, string sourceFilePath, int? unixFileMode) =>
+        AddDeployArtifactFromFile(deployRelativePath, sourceFilePath, unixFileMode);
+    IComposeBuilder IComposeBuilder.AddDeployArtifactFromDirectory(string deployRelativePath, string sourceDirectoryPath, int? unixFileMode) =>
+        AddDeployArtifactFromDirectory(deployRelativePath, sourceDirectoryPath, unixFileMode);
+    ProjectManifest IComposeBuilder.BuildManifest() => BuildManifest();
+    string IComposeBuilder.SerializeManifestJson() => SerializeManifestJson();
+    bool IComposeBuilder.HasManifestPayload() => HasManifestPayload();
+    IReadOnlyList<DeployArtifact> IComposeBuilder.GetDeployArtifacts() => GetDeployArtifacts();
+    string IComposeBuilder.GenerateYaml() => GenerateYaml();
+    Task IComposeBuilder.SaveToFileAsync(string path, CancellationToken cancellationToken) => SaveToFileAsync(path, cancellationToken);
+    Task<ValidationResult> IComposeBuilder.ValidateAsync(ComposeValidatorOptions? options, CancellationToken cancellationToken) =>
+        ValidateAsync(options, cancellationToken);
+    Task<TestResult> IComposeBuilder.StartAsync(string composeFilePath, string projectName, string dockerComposeExecutable, TestOptions? options, CancellationToken cancellationToken) =>
+        StartAsync(composeFilePath, projectName, dockerComposeExecutable, options, cancellationToken);
+    Task<TestResult> IComposeBuilder.StartAsync(TestOptions? options, CancellationToken cancellationToken) => StartAsync(options, cancellationToken);
+    Task IComposeBuilder.StopAsync(string composeFilePath, string projectName, bool removeVolumes, string dockerComposeExecutable, CancellationToken cancellationToken) =>
+        StopAsync(composeFilePath, projectName, removeVolumes, dockerComposeExecutable, cancellationToken);
+    Task IComposeBuilder.StopAsync(bool removeVolumes, CancellationToken cancellationToken) => StopAsync(removeVolumes, cancellationToken);
+    Task IComposeBuilder.StopAsync(CancellationToken cancellationToken) => StopAsync(cancellationToken);
+    Task<TestResult> IComposeBuilder.TestAsync(string composeFilePath, string projectName, string dockerComposeExecutable, TestOptions? options, CancellationToken cancellationToken) =>
+        TestAsync(composeFilePath, projectName, dockerComposeExecutable, options, cancellationToken);
+    Task<TestResult> IComposeBuilder.TestAsync(TestOptions? options, CancellationToken cancellationToken) => TestAsync(options, cancellationToken);
+    Task<DeployResult> IComposeBuilder.PublishAsync(string agentUrl, string? apiKey, CancellationToken cancellationToken) =>
+        PublishAsync(agentUrl, apiKey, cancellationToken);
+    Task<ClusterDeployResult> IComposeBuilder.DeployToClusterAsync(string masterUrl, string? apiKey, string? preferredLocation, CancellationToken cancellationToken) =>
+        DeployToClusterAsync(masterUrl, apiKey, preferredLocation, cancellationToken);
+    Task<ClusterDeployResult> IComposeBuilder.PublishToClusterAsync(string masterUrl, string? apiKey, string? preferredLocation, CancellationToken cancellationToken) =>
+        PublishToClusterAsync(masterUrl, apiKey, preferredLocation, cancellationToken);
+    Task IComposeBuilder.PushManifestAndArtifactsAsync(string agentUrl, string? apiKey, CancellationToken cancellationToken) =>
+        PushManifestAndArtifactsAsync(agentUrl, apiKey, cancellationToken);
+    Task IComposeBuilder.SnapshotRemoteVolumeToFileAsync(string agentUrl, string dockerVolumeName, string localFilePath, string? apiKey, string compress, CancellationToken cancellationToken) =>
+        SnapshotRemoteVolumeToFileAsync(agentUrl, dockerVolumeName, localFilePath, apiKey, compress, cancellationToken);
+    Task<string> IComposeBuilder.SnapshotRemoteVolumeToFileAsync(string agentUrl, string dockerVolumeName, string? apiKey, string compress, CancellationToken cancellationToken) =>
+        SnapshotRemoteVolumeToFileAsync(agentUrl, dockerVolumeName, apiKey, compress, cancellationToken);
+    Task<string> IComposeBuilder.SnapshotRemoteVolumeToDirectoryAsync(string agentUrl, string dockerVolumeName, string localDirectoryPath, string? apiKey, string compress, string? filePrefix, CancellationToken cancellationToken) =>
+        SnapshotRemoteVolumeToDirectoryAsync(agentUrl, dockerVolumeName, localDirectoryPath, apiKey, compress, filePrefix, cancellationToken);
+    Task<VolumeOperationResult> IComposeBuilder.SnapshotRemoteVolumeUploadToUrlAsync(string agentUrl, string dockerVolumeName, VolumeSnapshotUploadRequest request, string? apiKey, CancellationToken cancellationToken) =>
+        SnapshotRemoteVolumeUploadToUrlAsync(agentUrl, dockerVolumeName, request, apiKey, cancellationToken);
+    Task<VolumeOperationResult> IComposeBuilder.RestoreRemoteVolumeFromFileAsync(string agentUrl, string dockerVolumeName, string localArchivePath, string? apiKey, string compress, CancellationToken cancellationToken) =>
+        RestoreRemoteVolumeFromFileAsync(agentUrl, dockerVolumeName, localArchivePath, apiKey, compress, cancellationToken);
+    Task<VolumeOperationResult> IComposeBuilder.RestoreRemoteVolumeFromUrlAsync(string agentUrl, string dockerVolumeName, VolumeRestoreFromUrlRequest request, string? apiKey, CancellationToken cancellationToken) =>
+        RestoreRemoteVolumeFromUrlAsync(agentUrl, dockerVolumeName, request, apiKey, cancellationToken);
+    Task<DeployResult> IComposeBuilder.StartRemoteAsync(string agentUrl, string? apiKey, CancellationToken cancellationToken) =>
+        StartRemoteAsync(agentUrl, apiKey, cancellationToken);
+    Task<DeployResult> IComposeBuilder.RestartRemoteAsync(string agentUrl, string? apiKey, CancellationToken cancellationToken) =>
+        RestartRemoteAsync(agentUrl, apiKey, cancellationToken);
+    Task<DeployResult> IComposeBuilder.StopRemoteAsync(string agentUrl, string? apiKey, bool removeVolumes, CancellationToken cancellationToken) =>
+        StopRemoteAsync(agentUrl, apiKey, removeVolumes, cancellationToken);
+    string IComposeBuilder.ToFluentApiCode(string variableName) => ToFluentApiCode(variableName);
+}

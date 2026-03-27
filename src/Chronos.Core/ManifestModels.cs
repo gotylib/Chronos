@@ -32,6 +32,7 @@ public sealed class JobDefinition
     public string Type { get; set; } = "exec";
     public string? ExecCommand { get; set; }
     public string? ScriptRelativePath { get; set; }
+    public bool OnStartup { get; set; } = false;
     public int IntervalMinutes { get; set; } = 60;
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -43,6 +44,7 @@ public sealed class ManifestServiceSection
     public List<DeclarativeCheck> Tests { get; set; } = new();
     public List<JobDefinition> Jobs { get; set; } = new();
     public List<CodeTestEntry> CodeTests { get; set; } = new();
+    public List<CodeJobEntry> CodeJobs { get; set; } = new();
 }
 
 /// <summary>Сохраняется как <c>.chronos/manifest.json</c> на агенте.</summary>

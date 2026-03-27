@@ -16,11 +16,12 @@ internal static class ComposeExec
         string shellCommand,
         CancellationToken cancellationToken)
     {
-        var args = $"-f \"{composeFileName}\" -p {projectName} exec -T {serviceName} sh -c {QuoteUnix(shellCommand)}";
+        var composeArgs = $"-f \"{composeFileName}\" -p {projectName} exec -T {serviceName} sh -c {QuoteUnix(shellCommand)}";
+        var (fileName, args) = ComposeCommandLine.Build(dockerComposeExecutable, composeArgs);
 
         var psi = new ProcessStartInfo
         {
-            FileName = dockerComposeExecutable,
+            FileName = fileName,
             Arguments = args,
             WorkingDirectory = composeWorkingDirectory,
             UseShellExecute = false,

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Chronos.Core.Safety;
 
 namespace Chronos.Core;
 
@@ -40,6 +41,9 @@ public static class DeclarativeCheckRunner
                 if (string.IsNullOrWhiteSpace(test.ExecCommand))
                     return Fail(serviceName, id, test.Criticality, "Exec test requires ExecCommand.", utc);
 
+                if (!CommandSafety.ValidateShellCommand(projectName, test.ExecCommand, out var reason))
+                    return Fail(serviceName, id, test.Criticality, reason ?? "Exec test command rejected by safety policy.", utc);
+
                 var (code, stdout, stderr) = await ComposeExec.RunInServiceAsync(
                     dockerComposeExecutable,
                     composeWorkingDirectory,
@@ -52,8 +56,8 @@ public static class DeclarativeCheckRunner
                 if (code != 0)
                 {
                     var tail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-                    return Fail(serviceName, id, test.Criticality,
-                        $"exec failed (exit {code}): {Trim(tail, 2000)}", utc);
+                    var msg = $"exec failed (exit {code}): {Trim(tail, 2000)}";
+                    return Fail(serviceName, id, test.Criticality, LogRedactor.RedactSecrets(msg), utc);
                 }
 
                 return Ok(serviceName, id, test.Criticality, utc);
@@ -61,9 +65,13 @@ public static class DeclarativeCheckRunner
 
             return Fail(serviceName, id, test.Criticality, $"Unknown test type '{test.Type}'.", utc);
         }
+        catch (OperationCanceledException)
+        {
+            return Fail(serviceName, id, test.Criticality, "Execution cancelled/timeout.", utc);
+        }
         catch (Exception ex)
         {
-            return Fail(serviceName, id, test.Criticality, ex.Message, utc);
+            return Fail(serviceName, id, test.Criticality, LogRedactor.RedactSecrets(ex.Message), utc);
         }
     }
 
@@ -87,6 +95,9 @@ public static class DeclarativeCheckRunner
                 if (string.IsNullOrWhiteSpace(job.ExecCommand))
                     return JobFail(serviceName, id, job.Criticality, "Exec job requires ExecCommand.", utc);
 
+                if (!CommandSafety.ValidateShellCommand(projectName, job.ExecCommand, out var reason))
+                    return JobFail(serviceName, id, job.Criticality, reason ?? "Exec job command rejected by safety policy.", utc);
+
                 var (code, stdout, stderr) = await ComposeExec.RunInServiceAsync(
                     dockerComposeExecutable,
                     composeWorkingDirectory,
@@ -99,8 +110,8 @@ public static class DeclarativeCheckRunner
                 if (code != 0)
                 {
                     var tail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-                    return JobFail(serviceName, id, job.Criticality,
-                        $"exec failed (exit {code}): {Trim(tail, 2000)}", utc);
+                    var msg = $"exec failed (exit {code}): {Trim(tail, 2000)}";
+                    return JobFail(serviceName, id, job.Criticality, LogRedactor.RedactSecrets(msg), utc);
                 }
 
                 return JobOk(serviceName, id, job.Criticality, utc);
@@ -117,6 +128,9 @@ public static class DeclarativeCheckRunner
 
                 if (!File.Exists(scriptPath))
                     return JobFail(serviceName, id, job.Criticality, $"Script not found: {scriptPath}", utc);
+
+                if (!CommandSafety.ValidateScriptFile(projectName, scriptPath, out var reason))
+                    return JobFail(serviceName, id, job.Criticality, reason ?? "Script rejected by safety policy.", utc);
 
                 string fileName;
                 string arguments;
@@ -140,8 +154,8 @@ public static class DeclarativeCheckRunner
                 if (code != 0)
                 {
                     var tail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-                    return JobFail(serviceName, id, job.Criticality,
-                        $"script failed (exit {code}): {Trim(tail, 2000)}", utc);
+                    var msg = $"script failed (exit {code}): {Trim(tail, 2000)}";
+                    return JobFail(serviceName, id, job.Criticality, LogRedactor.RedactSecrets(msg), utc);
                 }
 
                 return JobOk(serviceName, id, job.Criticality, utc);
@@ -149,9 +163,13 @@ public static class DeclarativeCheckRunner
 
             return JobFail(serviceName, id, job.Criticality, $"Unknown job type '{job.Type}'.", utc);
         }
+        catch (OperationCanceledException)
+        {
+            return JobFail(serviceName, id, job.Criticality, "Execution cancelled/timeout.", utc);
+        }
         catch (Exception ex)
         {
-            return JobFail(serviceName, id, job.Criticality, ex.Message, utc);
+            return JobFail(serviceName, id, job.Criticality, LogRedactor.RedactSecrets(ex.Message), utc);
         }
     }
 

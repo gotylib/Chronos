@@ -11,17 +11,49 @@ public sealed class SchedulerHostedService : BackgroundService
     private readonly AgentPaths _paths;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SchedulerHostedService> _logger;
+    private readonly ExecutionPolicyOptions _policy;
+    private readonly ExecutionThrottler _throttler;
 
     private static readonly ConcurrentDictionary<string, DateTimeOffset> NextRunUtc = new();
 
     public SchedulerHostedService(
         AgentPaths paths,
         IHttpClientFactory httpClientFactory,
-        ILogger<SchedulerHostedService> logger)
+        ILogger<SchedulerHostedService> logger,
+        ExecutionPolicyOptions policy,
+        ExecutionThrottler throttler)
     {
         _paths = paths;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _policy = policy;
+        _throttler = throttler;
+    }
+
+    private async Task<T> RunWithTimeoutAndThrottleAsync<T>(
+        string projectName,
+        CancellationToken ct,
+        Func<CancellationToken, Task<T>> action)
+    {
+        return await _throttler.RunThrottledAsync(projectName, ct, async throttledCt =>
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(throttledCt);
+            timeoutCts.CancelAfter(_policy.TestExecutionTimeout);
+            return await action(timeoutCts.Token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
+
+    private Task RunWithTimeoutAndThrottleAsync(
+        string projectName,
+        CancellationToken ct,
+        Func<CancellationToken, Task> action)
+    {
+        return _throttler.RunThrottledAsync(projectName, ct, async throttledCt =>
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(throttledCt);
+            timeoutCts.CancelAfter(_policy.TestExecutionTimeout);
+            await action(timeoutCts.Token).ConfigureAwait(false);
+        });
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -103,20 +135,26 @@ public sealed class SchedulerHostedService : BackgroundService
                     if (!ShouldRun(key, now, TimeSpan.FromMinutes(test.IntervalMinutes.Value)))
                         continue;
 
-                    var rec = await DeclarativeCheckRunner.RunCheckAsync(
-                        test,
-                        serviceName,
-                        projectDir,
-                        _paths.ComposeFileName,
+                    var rec = await RunWithTimeoutAndThrottleAsync(
                         projectName,
-                        _paths.DockerComposeExecutable,
-                        http,
-                        ct).ConfigureAwait(false);
+                        ct,
+                        token => DeclarativeCheckRunner.RunCheckAsync(
+                            test,
+                            serviceName,
+                            projectDir,
+                            _paths.ComposeFileName,
+                            projectName,
+                            _paths.DockerComposeExecutable,
+                            http,
+                            token)).ConfigureAwait(false);
 
                     await AgentPersistence.AppendTestAsync(projectDir, rec, ct).ConfigureAwait(false);
 
                     if (!rec.Success && test.Criticality == TestCriticality.Critical)
-                        await RestartServiceAsync(projectDir, serviceName, ct).ConfigureAwait(false);
+                        await RunWithTimeoutAndThrottleAsync(
+                            projectName,
+                            ct,
+                            token => RestartServiceAsync(projectDir, serviceName, token)).ConfigureAwait(false);
                 }
 
                 foreach (var job in section.Jobs ?? new List<JobDefinition>())
@@ -128,20 +166,26 @@ public sealed class SchedulerHostedService : BackgroundService
                     if (!ShouldRun(key, now, TimeSpan.FromMinutes(job.IntervalMinutes)))
                         continue;
 
-                    var rec = await DeclarativeCheckRunner.RunJobAsync(
-                        job,
-                        serviceName,
-                        projectDir,
-                        _paths.ComposeFileName,
+                    var rec = await RunWithTimeoutAndThrottleAsync(
                         projectName,
-                        _paths.DockerComposeExecutable,
-                        projectDir,
-                        ct).ConfigureAwait(false);
+                        ct,
+                        token => DeclarativeCheckRunner.RunJobAsync(
+                            job,
+                            serviceName,
+                            projectDir,
+                            _paths.ComposeFileName,
+                            projectName,
+                            _paths.DockerComposeExecutable,
+                            projectDir,
+                            token)).ConfigureAwait(false);
 
                     await AgentPersistence.AppendJobAsync(projectDir, rec, ct).ConfigureAwait(false);
 
                     if (!rec.Success && job.Criticality == TestCriticality.Critical)
-                        await RestartServiceAsync(projectDir, serviceName, ct).ConfigureAwait(false);
+                        await RunWithTimeoutAndThrottleAsync(
+                            projectName,
+                            ct,
+                            token => RestartServiceAsync(projectDir, serviceName, token)).ConfigureAwait(false);
                 }
 
                 foreach (var code in section.CodeTests ?? new List<CodeTestEntry>())
@@ -153,20 +197,57 @@ public sealed class SchedulerHostedService : BackgroundService
                     if (!ShouldRun(key, now, TimeSpan.FromMinutes(code.IntervalMinutes.Value)))
                         continue;
 
-                    var rec = await CodeTestRunner.RunAsync(
-                        code,
-                        serviceName,
-                        projectDir,
-                        _paths.ComposeFileName,
+                    var rec = await RunWithTimeoutAndThrottleAsync(
                         projectName,
-                        _paths.DockerComposeExecutable,
-                        http,
-                        ct).ConfigureAwait(false);
+                        ct,
+                        token => CodeTestRunner.RunAsync(
+                            code,
+                            serviceName,
+                            projectDir,
+                            _paths.ComposeFileName,
+                            projectName,
+                            _paths.DockerComposeExecutable,
+                            http,
+                            token)).ConfigureAwait(false);
 
                     await AgentPersistence.AppendTestAsync(projectDir, rec, ct).ConfigureAwait(false);
 
                     if (!rec.Success && code.Criticality == TestCriticality.Critical)
-                        await RestartServiceAsync(projectDir, serviceName, ct).ConfigureAwait(false);
+                        await RunWithTimeoutAndThrottleAsync(
+                            projectName,
+                            ct,
+                            token => RestartServiceAsync(projectDir, serviceName, token)).ConfigureAwait(false);
+                }
+
+                foreach (var codeJob in section.CodeJobs ?? new List<CodeJobEntry>())
+                {
+                    if (!codeJob.IntervalMinutes.HasValue || codeJob.IntervalMinutes.Value <= 0)
+                        continue;
+
+                    var key = $"{projectName}|{serviceName}|cj|{codeJob.Id}";
+                    if (!ShouldRun(key, now, TimeSpan.FromMinutes(codeJob.IntervalMinutes.Value)))
+                        continue;
+
+                    var rec = await RunWithTimeoutAndThrottleAsync(
+                        projectName,
+                        ct,
+                        token => CodeJobRunner.RunAsync(
+                            codeJob,
+                            serviceName,
+                            projectDir,
+                            _paths.ComposeFileName,
+                            projectName,
+                            _paths.DockerComposeExecutable,
+                            http,
+                            token)).ConfigureAwait(false);
+
+                    await AgentPersistence.AppendJobAsync(projectDir, rec, ct).ConfigureAwait(false);
+
+                    if (!rec.Success && codeJob.Criticality == TestCriticality.Critical)
+                        await RunWithTimeoutAndThrottleAsync(
+                            projectName,
+                            ct,
+                            token => RestartServiceAsync(projectDir, serviceName, token)).ConfigureAwait(false);
                 }
             }
         }
@@ -198,10 +279,11 @@ public sealed class SchedulerHostedService : BackgroundService
 
     private static async Task RunProcessAsync(string fileName, string arguments, string workingDirectory, CancellationToken ct)
     {
+        var (resolvedFileName, resolvedArgs) = ComposeCommandLine.Build(fileName, arguments);
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
-            Arguments = arguments,
+            FileName = resolvedFileName,
+            Arguments = resolvedArgs,
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -215,6 +297,6 @@ public sealed class SchedulerHostedService : BackgroundService
         _ = await p.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
         await p.WaitForExitAsync(ct).ConfigureAwait(false);
         if (p.ExitCode != 0)
-            throw new InvalidOperationException($"Process failed: {fileName} {arguments}. {err}");
+            throw new InvalidOperationException($"Process failed: {resolvedFileName} {resolvedArgs}. {err}");
     }
 }

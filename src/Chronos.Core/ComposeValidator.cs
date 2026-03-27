@@ -1,3 +1,5 @@
+using Chronos.Core.Compose;
+
 namespace Chronos.Core;
 
 public sealed class ComposeValidatorOptions

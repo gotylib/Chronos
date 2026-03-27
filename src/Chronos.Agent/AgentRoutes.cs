@@ -14,8 +14,13 @@ public static class AgentRoutes
         AgentPaths paths,
         string? expectedApiKey,
         SemaphoreSlim deployLock,
-        SemaphoreSlim volumeLock)
+        SemaphoreSlim volumeLock,
+        ExecutionThrottler throttler,
+        ExecutionPolicyOptions policy)
     {
+        _ = throttler;
+        _ = policy;
+
         app.MapPost("/projects/{projectName}/chronos/manifest", async (
             string projectName,
             HttpRequest request,
@@ -396,6 +401,8 @@ public static class AgentRoutes
         string projectName,
         string projectDir,
         AgentPaths paths,
+        ExecutionThrottler throttler,
+        ExecutionPolicyOptions policy,
         CancellationToken ct)
     {
         var manifestPath = Path.Combine(projectDir, ".chronos", "manifest.json");
@@ -420,19 +427,35 @@ public static class AgentRoutes
 
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
 
+        async Task<T> RunWithTimeoutAndThrottleAsync<T>(Func<CancellationToken, Task<T>> action)
+            => await throttler.RunThrottledAsync(projectName, ct, async throttledCt =>
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(throttledCt);
+                timeoutCts.CancelAfter(policy.TestExecutionTimeout);
+                return await action(timeoutCts.Token).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+
+        Task RunWithTimeoutAndThrottleNoResultAsync(Func<CancellationToken, Task> action)
+            => throttler.RunThrottledAsync(projectName, ct, async throttledCt =>
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(throttledCt);
+                timeoutCts.CancelAfter(policy.TestExecutionTimeout);
+                await action(timeoutCts.Token).ConfigureAwait(false);
+            });
+
         foreach (var (serviceName, section) in manifest.Services)
         {
             foreach (var test in (section.Tests ?? new List<DeclarativeCheck>()).Where(t => t.OnStartup))
             {
-                var rec = await DeclarativeCheckRunner.RunCheckAsync(
-                    test,
-                    serviceName,
-                    projectDir,
-                    paths.ComposeFileName,
-                    projectName,
-                    paths.DockerComposeExecutable,
-                    http,
-                    ct).ConfigureAwait(false);
+                    var rec = await RunWithTimeoutAndThrottleAsync(token => DeclarativeCheckRunner.RunCheckAsync(
+                        test,
+                        serviceName,
+                        projectDir,
+                        paths.ComposeFileName,
+                        projectName,
+                        paths.DockerComposeExecutable,
+                        http,
+                        token)).ConfigureAwait(false);
 
                 await AgentPersistence.AppendTestAsync(projectDir, rec, ct).ConfigureAwait(false);
 
@@ -440,20 +463,20 @@ public static class AgentRoutes
                     Console.WriteLine($"[startup] {serviceName}/{rec.TestId}: FAIL ({test.Criticality}) {rec.Message}");
 
                 if (!rec.Success && test.Criticality == TestCriticality.Critical)
-                    await RestartComposeServiceAsync(paths, projectDir, serviceName, ct).ConfigureAwait(false);
+                    await RunWithTimeoutAndThrottleNoResultAsync(token => RestartComposeServiceAsync(paths, projectDir, serviceName, token)).ConfigureAwait(false);
             }
 
             foreach (var code in (section.CodeTests ?? new List<CodeTestEntry>()).Where(c => c.OnStartup))
             {
-                var rec = await CodeTestRunner.RunAsync(
-                    code,
-                    serviceName,
-                    projectDir,
-                    paths.ComposeFileName,
-                    projectName,
-                    paths.DockerComposeExecutable,
-                    http,
-                    ct).ConfigureAwait(false);
+                    var rec = await RunWithTimeoutAndThrottleAsync(token => CodeTestRunner.RunAsync(
+                        code,
+                        serviceName,
+                        projectDir,
+                        paths.ComposeFileName,
+                        projectName,
+                        paths.DockerComposeExecutable,
+                        http,
+                        token)).ConfigureAwait(false);
 
                 await AgentPersistence.AppendTestAsync(projectDir, rec, ct).ConfigureAwait(false);
 
@@ -461,7 +484,49 @@ public static class AgentRoutes
                     Console.WriteLine($"[startup] code {serviceName}/{rec.TestId}: FAIL ({code.Criticality}) {rec.Message}");
 
                 if (!rec.Success && code.Criticality == TestCriticality.Critical)
-                    await RestartComposeServiceAsync(paths, projectDir, serviceName, ct).ConfigureAwait(false);
+                    await RunWithTimeoutAndThrottleNoResultAsync(token => RestartComposeServiceAsync(paths, projectDir, serviceName, token)).ConfigureAwait(false);
+            }
+
+            foreach (var job in (section.Jobs ?? new List<JobDefinition>()).Where(j => j.OnStartup))
+            {
+                    var rec = await RunWithTimeoutAndThrottleAsync(token => DeclarativeCheckRunner.RunJobAsync(
+                        job,
+                        serviceName,
+                        projectDir,
+                        paths.ComposeFileName,
+                        projectName,
+                        paths.DockerComposeExecutable,
+                        projectDir,
+                        token)).ConfigureAwait(false);
+
+                await AgentPersistence.AppendJobAsync(projectDir, rec, ct).ConfigureAwait(false);
+
+                if (!rec.Success)
+                    Console.WriteLine($"[startup] job {serviceName}/{rec.JobId}: FAIL ({job.Criticality}) {rec.Message}");
+
+                if (!rec.Success && job.Criticality == TestCriticality.Critical)
+                    await RunWithTimeoutAndThrottleNoResultAsync(token => RestartComposeServiceAsync(paths, projectDir, serviceName, token)).ConfigureAwait(false);
+            }
+
+            foreach (var job in (section.CodeJobs ?? new List<CodeJobEntry>()).Where(j => j.OnStartup))
+            {
+                    var rec = await RunWithTimeoutAndThrottleAsync(token => CodeJobRunner.RunAsync(
+                        job,
+                        serviceName,
+                        projectDir,
+                        paths.ComposeFileName,
+                        projectName,
+                        paths.DockerComposeExecutable,
+                        http,
+                        token)).ConfigureAwait(false);
+
+                await AgentPersistence.AppendJobAsync(projectDir, rec, ct).ConfigureAwait(false);
+
+                if (!rec.Success)
+                    Console.WriteLine($"[startup] code-job {serviceName}/{rec.JobId}: FAIL ({job.Criticality}) {rec.Message}");
+
+                if (!rec.Success && job.Criticality == TestCriticality.Critical)
+                    await RunWithTimeoutAndThrottleNoResultAsync(token => RestartComposeServiceAsync(paths, projectDir, serviceName, token)).ConfigureAwait(false);
             }
         }
     }
@@ -482,10 +547,11 @@ public static class AgentRoutes
 
     private static async Task RunSilentProcessAsync(string fileName, string arguments, string workingDirectory, CancellationToken ct)
     {
+        var (resolvedFileName, resolvedArgs) = ComposeCommandLine.Build(fileName, arguments);
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
-            Arguments = arguments,
+            FileName = resolvedFileName,
+            Arguments = resolvedArgs,
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,

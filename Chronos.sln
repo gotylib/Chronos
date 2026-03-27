@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -14,6 +14,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SampleTests", "src\SampleTests\SampleTests.csproj", "{0954C468-5838-4BD8-8C45-1726EEF86CCF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleTests", "ConsoleTests\ConsoleTests.csproj", "{E29E43B3-258D-40DB-A127-772E8CA067E1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chronos.Master", "src\Chronos.Master\Chronos.Master.csproj", "{713DAE7D-F828-48BC-8238-9EA3B499FAFF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -85,6 +87,18 @@ Global
 		{E29E43B3-258D-40DB-A127-772E8CA067E1}.Release|x64.Build.0 = Release|Any CPU
 		{E29E43B3-258D-40DB-A127-772E8CA067E1}.Release|x86.ActiveCfg = Release|Any CPU
 		{E29E43B3-258D-40DB-A127-772E8CA067E1}.Release|x86.Build.0 = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|x64.Build.0 = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Debug|x86.Build.0 = Debug|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|x64.ActiveCfg = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|x64.Build.0 = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|x86.ActiveCfg = Release|Any CPU
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -95,5 +109,6 @@ Global
 		{8D4E63D4-AE42-4AC1-A514-818C0FD2B393} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{0954C468-5838-4BD8-8C45-1726EEF86CCF} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{E29E43B3-258D-40DB-A127-772E8CA067E1} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{713DAE7D-F828-48BC-8238-9EA3B499FAFF} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

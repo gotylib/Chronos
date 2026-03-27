@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Chronos.Core.Compose.Implementation;
 
 namespace Chronos.Core;
 
@@ -52,6 +53,9 @@ public sealed class Service
 
     /// <summary>Методы с <see cref="TestAttribute"/>, см. <see cref="ServiceBuilder.UseTests(System.Type[])"/>.</summary>
     public List<CodeTestEntry> CodeTests { get; } = new();
+
+    /// <summary>Методы с <see cref="JobAttribute"/>, см. <see cref="ServiceBuilder.UseJobs(System.Type[])"/>.</summary>
+    public List<CodeJobEntry> CodeJobs { get; } = new();
 }
 
 public sealed class PortMapping
@@ -139,6 +143,7 @@ public sealed class DeployResult
     public bool Success { get; set; }
     public string? Error { get; set; }
     public List<ContainerStatus> Containers { get; set; } = new();
+    public DiagnosticsSnapshot? Diagnostics { get; set; }
 }
 
 public sealed class ValidationError

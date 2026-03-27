@@ -4,10 +4,10 @@ using Chronos.Core.Safety;
 
 namespace Chronos.Core;
 
-public static class CodeTestRunner
+public static class CodeJobRunner
 {
-    public static async Task<CheckRunRecord> RunAsync(
-        CodeTestEntry entry,
+    public static async Task<JobRunRecord> RunAsync(
+        CodeJobEntry entry,
         string serviceName,
         string composeWorkingDirectory,
         string composeFileName,
@@ -16,7 +16,7 @@ public static class CodeTestRunner
         HttpClient http,
         CancellationToken cancellationToken = default)
     {
-        var id = string.IsNullOrWhiteSpace(entry.Id) ? "code" : entry.Id;
+        var id = string.IsNullOrWhiteSpace(entry.Id) ? "code-job" : entry.Id;
         var utc = DateTimeOffset.UtcNow;
 
         try
@@ -28,10 +28,7 @@ public static class CodeTestRunner
                     entry.AssemblyRelativePath.Replace('/', Path.DirectorySeparatorChar)));
 
             if (!File.Exists(asmFull))
-            {
-                return Fail(serviceName, id, entry.Criticality,
-                    $"Assembly not found: {asmFull}", utc);
-            }
+                return Fail(serviceName, id, entry.Criticality, $"Assembly not found: {asmFull}", utc);
 
             if (!AssemblySafety.ValidateAssemblyPath(asmFull, out var reason))
                 return Fail(serviceName, id, entry.Criticality, reason ?? "Assembly rejected by safety policy.", utc);
@@ -55,7 +52,7 @@ public static class CodeTestRunner
             if (method == null)
                 return Fail(serviceName, id, entry.Criticality, $"Method not found: {entry.MethodName}", utc);
 
-            var ctx = new ComposeTestContext
+            var ctx = new ComposeJobContext
             {
                 ProjectName = projectName,
                 ServiceName = serviceName,
@@ -77,22 +74,20 @@ public static class CodeTestRunner
             var args = BuildArguments(method, ctx, cancellationToken);
             var resultObj = method.Invoke(target, args);
 
-            if (resultObj is Task task)
-            {
-                await task.ConfigureAwait(false);
-                if (task.GetType().IsGenericType &&
-                    task.GetType().GetGenericTypeDefinition() == typeof(Task<>))
-                {
-                    var resultProp = task.GetType().GetProperty("Result");
-                    var outcome = resultProp?.GetValue(task);
-                    if (outcome is CodeTestOutcome o && !o.Success)
-                        return Fail(serviceName, id, entry.Criticality, o.Message ?? "failed", utc);
-                }
+            if (resultObj is not Task task)
+                return Fail(serviceName, id, entry.Criticality, "Job method must return Task.", utc);
 
-                return Ok(serviceName, id, entry.Criticality, utc);
+            await task.ConfigureAwait(false);
+            if (task.GetType().IsGenericType &&
+                task.GetType().GetGenericTypeDefinition() == typeof(Task<>))
+            {
+                var resultProp = task.GetType().GetProperty("Result");
+                var outcome = resultProp?.GetValue(task);
+                if (outcome is CodeJobOutcome o && !o.Success)
+                    return Fail(serviceName, id, entry.Criticality, o.Message ?? "failed", utc);
             }
 
-            return Fail(serviceName, id, entry.Criticality, "Test method must return Task.", utc);
+            return Ok(serviceName, id, entry.Criticality, utc);
         }
         catch (OperationCanceledException)
         {
@@ -104,13 +99,13 @@ public static class CodeTestRunner
         }
     }
 
-    private static object?[] BuildArguments(MethodInfo method, ComposeTestContext ctx, CancellationToken ct)
+    private static object?[] BuildArguments(MethodInfo method, ComposeJobContext ctx, CancellationToken ct)
     {
         var ps = method.GetParameters();
         var args = new object?[ps.Length];
         for (var i = 0; i < ps.Length; i++)
         {
-            if (ps[i].ParameterType == typeof(ComposeTestContext))
+            if (ps[i].ParameterType == typeof(ComposeJobContext))
                 args[i] = ctx;
             else if (ps[i].ParameterType == typeof(CancellationToken))
                 args[i] = ct;
@@ -119,21 +114,21 @@ public static class CodeTestRunner
         return args;
     }
 
-    private static CheckRunRecord Ok(string service, string testId, TestCriticality c, DateTimeOffset utc)
+    private static JobRunRecord Ok(string service, string jobId, TestCriticality c, DateTimeOffset utc)
         => new()
         {
             Service = service,
-            TestId = testId,
+            JobId = jobId,
             Success = true,
             UtcTime = utc,
             Criticality = c
         };
 
-    private static CheckRunRecord Fail(string service, string testId, TestCriticality c, string msg, DateTimeOffset utc)
+    private static JobRunRecord Fail(string service, string jobId, TestCriticality c, string msg, DateTimeOffset utc)
         => new()
         {
             Service = service,
-            TestId = testId,
+            JobId = jobId,
             Success = false,
             Message = msg,
             UtcTime = utc,

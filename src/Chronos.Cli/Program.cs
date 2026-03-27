@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Globalization;
 using Chronos.Core;
+using Chronos.Core.Compose.Implementation;
 using SampleTests;
 using Spectre.Console;
 
@@ -18,6 +20,8 @@ static bool HasFlag(string[] argv, string name)
     => argv.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase));
 
 var argv = Environment.GetCommandLineArgs().Skip(1).ToArray();
+var command = argv.FirstOrDefault()?.Trim().ToLowerInvariant();
+var bootstrapMode = command == "bootstrap" || GetArgValue(argv, "--repo") != null;
 
 if (argv.Length == 0 || HasFlag(argv, "--help"))
 {
@@ -26,6 +30,15 @@ if (argv.Length == 0 || HasFlag(argv, "--help"))
     AnsiConsole.WriteLine("Usage:");
     AnsiConsole.WriteLine("  Chronos.Cli --sample nginx|pg-nginx --project-name <name> --compose-out <path> [--local-test]");
     AnsiConsole.WriteLine("  Optional: --startup-timeout-seconds <N> --remove-after-test");
+    AnsiConsole.WriteLine();
+    AnsiConsole.WriteLine("Bootstrap:");
+    AnsiConsole.WriteLine("  Chronos.Cli bootstrap --repo <git-url> --branch <name> --master-url <url> [--api-key <key>] [--keep-repo]");
+    return;
+}
+
+if (bootstrapMode)
+{
+    await RunBootstrapAsync(argv);
     return;
 }
 
@@ -46,8 +59,7 @@ var removeAfterTest = !HasFlag(argv, "--no-remove-after-test");
 
 var compose = CreateSample(sample)
     .WithProjectName(projectName)
-    .WithComposeFilePath(composeOut)
-    .WithDockerComposeExecutable("docker-compose");
+    .WithComposeFilePath(composeOut);
 
 var validation = await compose.ValidateAsync();
 if (validation.Errors.Count > 0)
@@ -129,4 +141,83 @@ static ComposeBuilder CreateSample(string sample)
 
         _ => throw new InvalidOperationException($"Unknown sample '{sample}'. Supported: nginx, pg-nginx")
     };
+}
+
+static async Task RunBootstrapAsync(string[] argv)
+{
+    var repo = GetArgValue(argv, "--repo");
+    if (string.IsNullOrWhiteSpace(repo))
+        throw new InvalidOperationException("Bootstrap requires --repo <git-url>.");
+
+    var branch = GetArgValue(argv, "--branch") ?? "main";
+    var masterUrl = GetArgValue(argv, "--master-url") ?? "http://localhost:5000";
+    var apiKey = GetArgValue(argv, "--api-key");
+    var keepRepo = HasFlag(argv, "--keep-repo");
+
+    var tempDir = Path.Combine(Path.GetTempPath(), $"chronos-bootstrap-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    AnsiConsole.MarkupLine($"[blue]Bootstrap[/] Cloning [grey]{repo}[/] (branch: [grey]{branch}[/])...");
+    var clone = await RunProcessCaptureAsync(
+        fileName: "git",
+        arguments: $"clone --depth 1 --branch \"{branch}\" \"{repo}\" \"{tempDir}\"");
+    if (clone.ExitCode != 0)
+        throw new InvalidOperationException($"git clone failed: {clone.Stderr}");
+
+    var blueprint = ServerBlueprint.LoadFromRepositoryDirectory(tempDir);
+    if (blueprint.Projects.Count == 0)
+        throw new InvalidOperationException("No compose projects found (chronos.server.json missing and auto-discovery found nothing).");
+
+    AnsiConsole.MarkupLine($"[blue]Bootstrap[/] Found projects: [green]{blueprint.Projects.Count}[/]");
+    var results = await blueprint.PublishAllToClusterAsync(masterUrl, apiKey);
+
+    var table = new Table().RoundedBorder();
+    table.AddColumn("Project");
+    table.AddColumn("Result");
+    table.AddColumn("Agent");
+    table.AddColumn("Error");
+    foreach (var r in results)
+    {
+        table.AddRow(
+            r.ProjectName,
+            r.Success ? "[green]OK[/]" : "[red]FAIL[/]",
+            string.IsNullOrWhiteSpace(r.AgentId) ? "-" : r.AgentId,
+            r.Error ?? "-");
+    }
+    AnsiConsole.Write(table);
+
+    if (!keepRepo)
+    {
+        try { Directory.Delete(tempDir, recursive: true); }
+        catch { /* best-effort */ }
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[yellow]Repo kept:[/] {tempDir}");
+    }
+
+    if (results.Any(r => !r.Success))
+        Environment.ExitCode = 1;
+}
+
+static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessCaptureAsync(string fileName, string arguments)
+{
+    var psi = new ProcessStartInfo
+    {
+        FileName = fileName,
+        Arguments = arguments,
+        UseShellExecute = false,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        CreateNoWindow = true
+    };
+
+    using var process = new Process { StartInfo = psi };
+    process.Start();
+
+    var stdoutTask = process.StandardOutput.ReadToEndAsync();
+    var stderrTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    return (process.ExitCode, await stdoutTask, await stderrTask);
 }

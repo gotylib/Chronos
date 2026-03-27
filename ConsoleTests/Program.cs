@@ -1,8 +1,10 @@
 ﻿using Chronos.Core;
+using Chronos.Core.Compose.Implementation;
 using SampleTests;
 
 var config = new ComposeBuilder()
     .WithVersion("3.8")
+    .WithProjectName("test")
     .AddNetwork("app-net")
     .AddVolume("pgdata")
     .AddService(s => s
@@ -24,4 +26,4 @@ var config = new ComposeBuilder()
         .DependsOn("postgres")
         .UseTests<NginxTest>());
 
-await config.StartAsync();
+await config.StartRemoteAsync("http://localhost:5000");  
