@@ -29,7 +29,7 @@
   - отдаёт список проектов и возвращает compose по `projectName`
   - манифест/артефакты/volumes/diagnostics: `AgentRoutes`, `SchedulerHostedService`, `AgentPersistence`
   - **Linux как сервис:** `deploy/linux/` — `setup-chronos-agent.sh` (интерактив: runtime .NET 8 при необходимости, порт, API key, Master), `install-chronos-agent.sh` (ручная установка), systemd unit. Сборка в CI — один zip **framework-dependent** (нужен runtime на сервере), чтобы **кодовые jobs/тесты** с подгрузкой DLL работали стабильно.
-  - **Zip с GitHub:** [`.github/workflows/chronos-agent-release.yml`](.github/workflows/chronos-agent-release.yml) — `chronos-agent-linux-x64.zip` (внутри publish + `deploy-linux/`, включая `setup-chronos-agent.sh`).
+  - **Zip с GitHub:** [`.github/workflows/chronos-agent-release.yml`](.github/workflows/chronos-agent-release.yml) — при каждом **push** в `master`/`main` собирает `chronos-agent-linux-x64.zip` и кладёт в **артефакты** workflow; при **публикации Release** прикрепляет тот же файл к релизу.
 
 - `src/Chronos.Cli` — консольный CLI (ручная проверка “end-to-end”)
   - генерирует sample compose, валидирует, опционально запускает локальный тест и/или пушит на агент
@@ -44,7 +44,7 @@
 
 ### Агент на сервер без клона репо (GitHub)
 
-1. Скачай **`chronos-agent-linux-x64.zip`** со страницы **Releases** (или артефакт после **Actions → Run workflow**).
+1. Скачай **`chronos-agent-linux-x64.zip`**: со страницы **Releases** (если опубликовал релиз), либо **Actions** → последний успешный run **Chronos Agent (publish zip)** после пуша в `master`/`main`, либо **Run workflow** вручную.
 2. На сервере нужен **Docker** (и пользователь сервиса в группе `docker`). **.NET 8 runtime** скрипт поставит сам, если спросишь.
 3. Распакуй zip **куда удобно** (достаточно одного каталога с архивом) и запусти мастер:
 

@@ -14,7 +14,7 @@
 #
 # Then edit /etc/chronos-agent/environment and: systemctl restart chronos-agent
 #
-# Requires: .NET 8 runtime (Chronos.Agent.dll + dotnet) — нужно для кодовых jobs/тестов на агенте.
+# Requires: ASP.NET Core 8 runtime (Microsoft.AspNetCore.App), не только базовый dotnet — агент это веб-приложение.
 
 set -euo pipefail
 
