@@ -33,34 +33,35 @@ ensure_unzip() {
   die "Нужен unzip. Установи пакет unzip и повтори."
 }
 
+# Chronos.Agent — ASP.NET Core: нужен shared framework Microsoft.AspNetCore.App, не только Microsoft.NETCore.App.
 has_dotnet8_runtime() {
   command -v dotnet >/dev/null 2>&1 || return 1
-  dotnet --list-runtimes 2>/dev/null | grep -qE 'Microsoft\.NETCore\.App 8\.'
+  dotnet --list-runtimes 2>/dev/null | grep -qE 'Microsoft\.AspNetCore\.App 8\.'
 }
 
 ensure_dotnet_runtime() {
   if has_dotnet8_runtime; then
-    echo "Найден .NET 8 runtime: $(command -v dotnet)"
+    echo "Найден ASP.NET Core 8 runtime: $(command -v dotnet)"
     return 0
   fi
-  echo ".NET 8 runtime не найден в PATH."
-  read -rp "Установить через https://dot.net/v1/dotnet-install.sh в $DOTNET_INSTALL_DIR? [Y/n]: " ans
-  [[ "${ans:-Y}" =~ ^[Nn]$ ]] && die "Установи dotnet-runtime-8.0 и запусти скрипт снова."
+  echo "ASP.NET Core 8 runtime (Microsoft.AspNetCore.App) не найден."
+  read -rp "Установить через https://dot.net/v1/dotnet-install.sh (--runtime aspnetcore) в $DOTNET_INSTALL_DIR? [Y/n]: " ans
+  [[ "${ans:-Y}" =~ ^[Nn]$ ]] && die "Установи aspnetcore-runtime-8.0 (apt) или dotnet-install.sh --runtime aspnetcore."
 
   command -v curl >/dev/null 2>&1 || die "Нужен curl."
   install -d -m 0755 "$DOTNET_INSTALL_DIR"
   tmp_sh="$(mktemp)"
   curl -sSL https://dot.net/v1/dotnet-install.sh -o "$tmp_sh"
   chmod +x "$tmp_sh"
-  "$tmp_sh" --channel 8.0 --runtime dotnet --install-dir "$DOTNET_INSTALL_DIR"
+  "$tmp_sh" --channel 8.0 --runtime aspnetcore --install-dir "$DOTNET_INSTALL_DIR"
   rm -f "$tmp_sh"
 
   ln -sf "$DOTNET_INSTALL_DIR/dotnet" /usr/local/bin/dotnet 2>/dev/null || true
   export PATH="$DOTNET_INSTALL_DIR:$PATH"
   hash -r 2>/dev/null || true
 
-  has_dotnet8_runtime || die "После установки dotnet всё ещё не видит runtime 8. Проверь PATH (должен быть $DOTNET_INSTALL_DIR)."
-  echo "Установлен .NET 8 runtime."
+  has_dotnet8_runtime || die "После установки всё ещё нет Microsoft.AspNetCore.App 8.x. Проверь: dotnet --list-runtimes"
+  echo "Установлен ASP.NET Core 8 runtime."
 }
 
 read_source_path() {

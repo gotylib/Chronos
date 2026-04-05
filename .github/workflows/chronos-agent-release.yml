@@ -1,9 +1,16 @@
 # Один zip: framework-dependent (нужен .NET 8 runtime на сервере) — совместим с кодовыми jobs/тестами.
 # Установка на сервере: deploy/linux/setup-chronos-agent.sh (ставит runtime при необходимости, опрос настроек).
+#
+# Запуск:
+# - push в master/main → сборка + артефакт chronos-agent-linux-x64.zip (вкладка Actions)
+# - публикация GitHub Release → тот же zip прикрепляется к релизу
+# - workflow_dispatch → только артефакт
 
 name: Chronos Agent (publish zip)
 
 on:
+  push:
+    branches: [master, main]
   release:
     types: [published]
   workflow_dispatch:
@@ -31,8 +38,8 @@ jobs:
           cp -a deploy/linux bundle/deploy-linux
           (cd bundle && zip -r ../chronos-agent-linux-x64.zip .)
 
-      - name: Upload artifact (manual run)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload artifact (push / manual)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: chronos-agent-linux-x64
