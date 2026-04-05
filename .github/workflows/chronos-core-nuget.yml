@@ -1,0 +1,62 @@
+# Сборка NuGet-пакета Chronos.Core при пуше в master/main.
+# Артефакт: Chronos.Core.*.nupkg.
+# Публикация: GitHub Packages (всегда) + nuget.org (если задан секрет NUGET_API_KEY).
+
+name: Chronos.Core NuGet
+
+on:
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Pack
+        env:
+          NUGET_VERSION: 1.0.${{ github.run_number }}
+        run: |
+          dotnet pack src/Chronos.Core/Chronos.Core.csproj \
+            -c Release \
+            -o ./artifacts \
+            -p:PackageVersion="${NUGET_VERSION}" \
+            -p:RepositoryUrl="https://github.com/${{ github.repository }}" \
+            -p:PackageProjectUrl="https://github.com/${{ github.repository }}" \
+            -p:SourceRevisionId="${{ github.sha }}"
+
+      - name: Upload nupkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chronos-core-nupkg
+          path: artifacts/*.nupkg
+
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push artifacts/*.nupkg \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
+
+      # Создай ключ: https://www.nuget.org/account/apikeys → GitHub repo → Secrets → NUGET_API_KEY
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "NUGET_API_KEY не задан — публикация на nuget.org пропущена (только GitHub Packages)."
+            exit 0
+          fi
+          dotnet nuget push artifacts/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

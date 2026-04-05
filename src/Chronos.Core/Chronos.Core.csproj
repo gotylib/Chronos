@@ -1,15 +1,33 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Chronos.Core</PackageId>
+    <Version>1.0.0</Version>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
+    <Authors>Chronos</Authors>
+    <Title>Chronos Core</Title>
+    <Description>Fluent Docker Compose builder, validation, local/remote deploy helpers, and Chronos agent client types.</Description>
+    <PackageTags>docker;compose;chronos;deployment</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <!-- Задаётся в CI: -p:RepositoryUrl=... -p:PackageProjectUrl=... -->
+    <RepositoryUrl Condition="'$(RepositoryUrl)' != ''">$(RepositoryUrl)</RepositoryUrl>
+    <PackageProjectUrl Condition="'$(PackageProjectUrl)' != ''">$(PackageProjectUrl)</PackageProjectUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Docker.DotNet" Version="3.125.15" />
     <PackageReference Include="Polly" Version="8.6.6" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Compose\" />
   </ItemGroup>
 
 </Project>

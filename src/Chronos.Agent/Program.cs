@@ -1,21 +1,157 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Chronos.Agent;
+using Chronos.Core.Safety;
 using Chronos.Core;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (OperatingSystem.IsLinux())
+    builder.Host.UseSystemd();
+
 // Minimal config through env vars
 var appPath = builder.Configuration["CHRONOS_AGENT_APP_PATH"] ?? "/app";
 var composeFileName = builder.Configuration["CHRONOS_AGENT_COMPOSE_FILE"] ?? "docker-compose.yml";
-var dockerComposeExecutable = builder.Configuration["CHRONOS_AGENT_DOCKER_COMPOSE_EXECUTABLE"] ?? "docker-compose";
+var dockerComposeExecutable = DockerComposeExecutableResolver.Resolve(builder.Configuration["CHRONOS_AGENT_DOCKER_COMPOSE_EXECUTABLE"]);
+Console.WriteLine($"[agent] Docker Compose CLI: {dockerComposeExecutable}");
+var dockerExecutable = builder.Configuration["CHRONOS_AGENT_DOCKER_EXECUTABLE"] ?? "docker";
+var archiveImage = builder.Configuration["CHRONOS_AGENT_ARCHIVE_IMAGE"] ?? "alpine:latest";
 var expectedApiKey = builder.Configuration["CHRONOS_AGENT_API_KEY"];
 
+// Master registry integration (Phase 1 MVP)
+var masterUrl = builder.Configuration["CHRONOS_MASTER_URL"];
+var agentBaseUrl = builder.Configuration["CHRONOS_AGENT_BASE_URL"]; // e.g. http://agent:5000 (must be reachable by master)
+var agentLocation = builder.Configuration["CHRONOS_AGENT_LOCATION"];
+var configuredAgentId = builder.Configuration["CHRONOS_AGENT_ID"];
+var masterApiKey = builder.Configuration["CHRONOS_MASTER_API_KEY"];
+
+var agentPaths = new AgentPaths
+{
+    AppPath = appPath,
+    ComposeFileName = composeFileName,
+    DockerComposeExecutable = dockerComposeExecutable,
+    DockerExecutable = dockerExecutable,
+    ArchiveImage = archiveImage
+};
+
+builder.Services.AddSingleton(agentPaths);
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(nameof(AgentRoutes));
+builder.Services.AddHttpClient(nameof(SchedulerHostedService));
+builder.Services.AddHostedService<SchedulerHostedService>();
+
 var deploymentLock = new SemaphoreSlim(1, 1);
+var volumeLock = new SemaphoreSlim(2, 2);
+
+var execTimeoutSeconds = int.TryParse(builder.Configuration["CHRONOS_AGENT_TEST_EXECUTION_TIMEOUT_SECONDS"], out var t)
+    ? t
+    : 30;
+var maxParallelPerProject = int.TryParse(builder.Configuration["CHRONOS_AGENT_MAX_PARALLEL_TESTS_PER_PROJECT"], out var pp)
+    ? pp
+    : 5;
+var maxParallelTotal = int.TryParse(builder.Configuration["CHRONOS_AGENT_MAX_PARALLEL_TESTS_TOTAL"], out var mt)
+    ? mt
+    : 20;
+
+builder.Services.AddSingleton(new ExecutionPolicyOptions
+{
+    TestExecutionTimeout = TimeSpan.FromSeconds(Math.Max(1, execTimeoutSeconds)),
+    MaxParallelTestsPerProject = Math.Max(1, maxParallelPerProject),
+    MaxParallelTestsTotal = Math.Max(1, maxParallelTotal)
+});
+builder.Services.AddSingleton<ExecutionThrottler>(sp =>
+{
+    var opts = sp.GetRequiredService<ExecutionPolicyOptions>();
+    return new ExecutionThrottler(opts.MaxParallelTestsTotal, opts.MaxParallelTestsPerProject);
+});
 
 var app = builder.Build();
 
+var throttler = app.Services.GetRequiredService<ExecutionThrottler>();
+var policy = app.Services.GetRequiredService<ExecutionPolicyOptions>();
+AgentRoutes.MapAgentRoutes(app, agentPaths, expectedApiKey, deploymentLock, volumeLock, throttler, policy);
+
 app.MapGet("/", () => "Chronos agent is running.");
+
+if (!string.IsNullOrWhiteSpace(masterUrl) && !string.IsNullOrWhiteSpace(agentBaseUrl))
+{
+    var agentId = await GetOrCreateAgentIdAsync(appPath, configuredAgentId);
+
+    // Run registration + heartbeat loop in background.
+    _ = Task.Run(async () =>
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        if (!string.IsNullOrWhiteSpace(masterApiKey))
+            http.DefaultRequestHeaders.Add("X-API-Key", masterApiKey);
+        var capabilities = new Dictionary<string, string>
+        {
+            ["dockerComposeExecutable"] = dockerComposeExecutable,
+            ["dockerExecutable"] = dockerExecutable,
+        };
+
+        // One best-effort registration.
+        while (!app.Lifetime.ApplicationStopped.IsCancellationRequested)
+        {
+            try
+            {
+                Console.WriteLine($"[agent] Register to master: {masterUrl}/agents/register (id={agentId})");
+                var payload = new
+                {
+                    AgentId = agentId,
+                    BaseUrl = agentBaseUrl.TrimEnd('/'),
+                    Location = string.IsNullOrWhiteSpace(agentLocation) ? null : agentLocation,
+                    Capabilities = capabilities
+                };
+
+                // Re-register on every loop until success; simple for MVP.
+                var reg = await http.PostAsJsonAsync($"{masterUrl.TrimEnd('/')}/agents/register", payload);
+                if (reg.IsSuccessStatusCode)
+                    break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[agent] Master register failed: {ex.Message}");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(10));
+        }
+
+        // Heartbeats every ~30 seconds.
+        while (!app.Lifetime.ApplicationStopped.IsCancellationRequested)
+        {
+            try
+            {
+                var cpu = await HostMetrics.GetCpuPercentAsync(app.Lifetime.ApplicationStopping).ConfigureAwait(false);
+                var mem = HostMetrics.GetMemoryPercent();
+                var disk = HostMetrics.GetDiskPercent(appPath);
+                var hb = new
+                {
+                    CpuPercent = cpu,
+                    MemoryPercent = mem,
+                    DiskPercent = disk
+                };
+                var resp = await http.PostAsJsonAsync(
+                    $"{masterUrl.TrimEnd('/')}/agents/{Uri.EscapeDataString(agentId)}/heartbeat",
+                    hb);
+                if (!resp.IsSuccessStatusCode)
+                    Console.WriteLine($"[agent] Master heartbeat failed: {(int)resp.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[agent] Master heartbeat error: {ex.Message}");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(30));
+        }
+    });
+}
+else
+{
+    if (!string.IsNullOrWhiteSpace(masterUrl) && string.IsNullOrWhiteSpace(agentBaseUrl))
+        Console.WriteLine("[agent] CHRONOS_MASTER_URL is set but CHRONOS_AGENT_BASE_URL is empty; master registry disabled.");
+}
 
 static bool IsAuthorized(HttpRequest request, string? expectedApiKey)
 {
@@ -41,6 +177,27 @@ static string SafeProjectName(string projectName)
 
 static string GetProjectDir(string baseDir, string projectName)
     => Path.Combine(baseDir, SafeProjectName(projectName));
+
+static async Task<string> GetOrCreateAgentIdAsync(string appPath, string? configuredAgentId)
+{
+    if (!string.IsNullOrWhiteSpace(configuredAgentId))
+        return configuredAgentId.Trim();
+
+    var chronosDir = Path.Combine(appPath, ".chronos");
+    Directory.CreateDirectory(chronosDir);
+    var idPath = Path.Combine(chronosDir, "agent_id.txt");
+
+    if (File.Exists(idPath))
+    {
+        var existing = (await File.ReadAllTextAsync(idPath).ConfigureAwait(false)).Trim();
+        if (!string.IsNullOrWhiteSpace(existing))
+            return existing;
+    }
+
+    var id = Guid.NewGuid().ToString("N");
+    await File.WriteAllTextAsync(idPath, id).ConfigureAwait(false);
+    return id;
+}
 
 app.MapPost("/deploy", async (HttpRequest request, CancellationToken ct) =>
 {
@@ -80,6 +237,7 @@ app.MapPost("/deploy", async (HttpRequest request, CancellationToken ct) =>
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
 
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
+        status = await AttachDiagnosticsAsync(status, appPath, ct);
         status.DeploymentId = deployId;
         return Results.Json(status);
     }
@@ -124,6 +282,7 @@ app.MapPost("/start", async (HttpRequest request, CancellationToken ct) =>
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
+        status = await AttachDiagnosticsAsync(status, appPath, ct);
         return Results.Json(status);
     }
     finally
@@ -160,6 +319,7 @@ app.MapPost("/stop", async (HttpRequest request, CancellationToken ct, bool remo
 
         await Task.Delay(TimeSpan.FromSeconds(1), ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
+        status = await AttachDiagnosticsAsync(status, appPath, ct);
         return Results.Json(status);
     }
     finally
@@ -217,6 +377,7 @@ app.MapPost("/restart", async (HttpRequest request, CancellationToken ct, bool r
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
+        status = await AttachDiagnosticsAsync(status, appPath, ct);
         return Results.Json(status);
     }
     finally
@@ -231,6 +392,7 @@ app.MapGet("/status", async (CancellationToken ct) =>
         return Results.Json(new DeployResult { Success = false, Error = $"App path '{appPath}' doesn't exist." });
 
     var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
+    status = await AttachDiagnosticsAsync(status, appPath, ct);
     return Results.Json(status);
 });
 
@@ -245,7 +407,7 @@ app.MapGet("/logs", async (string? service, CancellationToken ct) =>
     if (logs.ExitCode != 0)
         return Results.Problem(logs.Stderr, statusCode: 500);
 
-    return Results.Text(logs.Stdout, contentType: "text/plain; charset=utf-8");
+    return Results.Text(LogRedactor.RedactSecrets(logs.Stdout), contentType: "text/plain; charset=utf-8");
 });
 
 // ---------------------------
@@ -333,7 +495,9 @@ app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequ
         }
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
+        status = await AttachDiagnosticsAsync(status, projectDir, ct);
         return Results.Json(status);
     }
     finally
@@ -371,6 +535,7 @@ app.MapPost("/projects/{projectName}/stop", async (string projectName, HttpReque
 
         await Task.Delay(TimeSpan.FromSeconds(1), ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
+        status = await AttachDiagnosticsAsync(status, projectDir, ct);
         return Results.Json(status);
     }
     finally
@@ -430,7 +595,9 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
         }
 
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct);
         var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
+        status = await AttachDiagnosticsAsync(status, projectDir, ct);
         return Results.Json(status);
     }
     finally
@@ -446,6 +613,7 @@ app.MapGet("/projects/{projectName}/status", async (string projectName, Cancella
         return Results.Json(new DeployResult { Success = false, Error = $"Project '{projectName}' not found." });
 
     var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
+    status = await AttachDiagnosticsAsync(status, projectDir, ct);
     return Results.Json(status);
 });
 
@@ -464,7 +632,29 @@ app.MapGet("/projects/{projectName}/logs", async (string projectName, string? se
     if (logs.ExitCode != 0)
         return Results.Problem(logs.Stderr, statusCode: 500);
 
-    return Results.Text(logs.Stdout, contentType: "text/plain; charset=utf-8");
+    return Results.Text(LogRedactor.RedactSecrets(logs.Stdout), contentType: "text/plain; charset=utf-8");
+});
+
+app.MapGet("/projects/{projectName}/volumes", async (string projectName, HttpRequest request, CancellationToken ct) =>
+{
+    if (!IsAuthorized(request, expectedApiKey))
+        return Results.Unauthorized();
+
+    var projectDir = GetProjectDir(appPath, projectName);
+    if (!Directory.Exists(projectDir))
+        return Results.Json(new List<string>());
+
+    var list = await RunProcessAsync(dockerExecutable, "volume ls --format \"{{.Name}}\"", projectDir, ct);
+    if (list.ExitCode != 0)
+        return Results.Problem(list.Stderr, statusCode: 500);
+
+    var prefix = projectName + "_";
+    var names = list.Stdout
+        .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(v => v.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(v => v)
+        .ToList();
+    return Results.Json(names);
 });
 
 app.Run();
@@ -540,11 +730,12 @@ static async Task<DeployResult> GetStatusAsync(string dockerComposeExecutable, s
 
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(string fileName, string arguments, string workingDirectory, CancellationToken ct)
 {
-    Console.WriteLine($"[agent cmd] {fileName} {arguments}");
+    var (resolvedFileName, resolvedArgs) = ComposeCommandLine.Build(fileName, arguments);
+    Console.WriteLine($"[agent cmd] {resolvedFileName} {resolvedArgs}");
     var psi = new ProcessStartInfo
     {
-        FileName = fileName,
-        Arguments = arguments,
+        FileName = resolvedFileName,
+        Arguments = resolvedArgs,
         WorkingDirectory = workingDirectory,
         UseShellExecute = false,
         RedirectStandardOutput = true,
@@ -564,4 +755,10 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
     var stderr = await stderrTask;
 
     return (process.ExitCode, stdout, stderr);
+}
+
+static async Task<DeployResult> AttachDiagnosticsAsync(DeployResult status, string projectDir, CancellationToken ct)
+{
+    status.Diagnostics = await AgentPersistence.LoadAsync(projectDir, ct).ConfigureAwait(false);
+    return status;
 }

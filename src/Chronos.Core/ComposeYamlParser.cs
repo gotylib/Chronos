@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Chronos.Core.Compose.Implementation;
 using YamlDotNet.RepresentationModel;
 
 namespace Chronos.Core;
@@ -141,21 +142,22 @@ public static class ComposeYamlParser
                 }
 
                 // ports
-                if (TryGetSequence(svcMap, "ports", out var portsSeq))
+                if (TryGetSequence(svcMap, "ports", out var portsSeq) && portsSeq is not null && portsSeq.Any())
                 {
-                    foreach (var portNode in portsSeq)
-                    {
-                        if (portNode is not YamlScalarNode portScalar || string.IsNullOrWhiteSpace(portScalar.Value))
-                            continue;
+                        foreach (var portNode in portsSeq)
+                        {
+                            if (portNode is not YamlScalarNode portScalar ||
+                                string.IsNullOrWhiteSpace(portScalar.Value))
+                                continue;
 
-                        var pm = ParsePort(portScalar.Value);
-                        if (pm != null)
-                            svc.Ports.Add(pm);
-                    }
+                            var pm = ParsePort(portScalar.Value);
+                            if (pm != null)
+                                svc.Ports.Add(pm);
+                        }
                 }
 
                 // environment
-                if (TryGetMapping(svcMap, "environment", out var envNode))
+                if (TryGetMapping(svcMap, "environment", out var envNode) && envNode is not null && envNode.Any())
                 {
                     foreach (var envEntry in envNode.Children)
                     {
@@ -169,9 +171,9 @@ public static class ComposeYamlParser
                 }
 
                 // labels
-                if (TryGetMapping(svcMap, "labels", out var labelsNode))
+                if (TryGetMapping(svcMap, "labels", out var labelsNode) && labelsNode is not null && labelsNode.Any())
                 {
-                    foreach (var lblEntry in labelsNode.Children)
+                    foreach (var lblEntry in labelsNode.Children )
                     {
                         var key = (lblEntry.Key as YamlScalarNode)?.Value;
                         if (string.IsNullOrWhiteSpace(key))
@@ -183,7 +185,7 @@ public static class ComposeYamlParser
                 }
 
                 // depends_on
-                if (TryGetSequence(svcMap, "depends_on", out var dependsSeq))
+                if (TryGetSequence(svcMap, "depends_on", out var dependsSeq) && dependsSeq is not null && dependsSeq.Any())
                 {
                     foreach (var depNode in dependsSeq)
                     {
@@ -191,7 +193,7 @@ public static class ComposeYamlParser
                             svc.DependsOn.Add(d.Value);
                     }
                 }
-                else if (TryGetMapping(svcMap, "depends_on", out var dependsMap))
+                else if (TryGetMapping(svcMap, "depends_on", out var dependsMap) && dependsMap is not null && dependsMap.Any())
                 {
                     foreach (var depEntry in dependsMap.Children)
                     {
@@ -351,7 +353,7 @@ public static class ComposeYamlParser
 
         return builder;
     }
-
+    
     private static bool TryGetNode(YamlMappingNode node, string key, out YamlNode? value)
     {
         value = null;
