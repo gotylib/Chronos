@@ -79,7 +79,9 @@ fi
 
 TMP_PUBLISH=""
 cleanup() {
-  [[ -n "$TMP_PUBLISH" && -d "$TMP_PUBLISH" ]] && rm -rf "$TMP_PUBLISH"
+  if [[ -n "$TMP_PUBLISH" && -d "$TMP_PUBLISH" ]]; then
+    rm -rf "$TMP_PUBLISH"
+  fi
 }
 trap cleanup EXIT
 
@@ -159,9 +161,11 @@ echo "Installed $SERVICE_NAME"
 echo "  Status:  systemctl status $SERVICE_NAME"
 echo "  Logs:    journalctl -u $SERVICE_NAME -f"
 if [[ "$SKIP_ENV" == true ]]; then
-  echo "  Env:     $ENV_FILE — НЕ создан (--skip-env). Создай файл (см. deploy-linux/chronos-agent.env.example) или дождись конца setup-chronos-agent.sh"
+  echo "  Env:     $ENV_FILE — не трогали (--skip-env; часто файл уже создан setup-chronos-agent.sh)"
 else
   echo "  Config:  $ENV_FILE"
 fi
-[[ "$NO_START" == true ]] && echo "  Note:    service not started (--no-start); run: systemctl restart $SERVICE_NAME"
+if [[ "$NO_START" == true ]]; then
+  echo "  Note:    service not started (--no-start); run: systemctl restart $SERVICE_NAME"
+fi
 echo
