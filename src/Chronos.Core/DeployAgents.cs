@@ -27,6 +27,11 @@ public interface IDeployAgent
 
 public sealed class HttpDeployAgent : IDeployAgent
 {
+    private static readonly JsonSerializerOptions DeployJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly HttpClient _http;
     private readonly string _agentUrl;
 
@@ -37,6 +42,26 @@ public sealed class HttpDeployAgent : IDeployAgent
 
         if (!string.IsNullOrWhiteSpace(apiKey))
             _http.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+    }
+
+    /// <summary>
+    /// When the agent returns <see cref="DeployResult.OperationPending"/>, polls GET status until <see cref="DeployResult.DeploymentInProgress"/> is false.
+    /// </summary>
+    private async Task<DeployResult> AwaitBackgroundDeploymentAsync(
+        Func<Task<DeployResult>> pollStatus,
+        CancellationToken cancellationToken)
+    {
+        var delayMs = 1000;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var s = await pollStatus().ConfigureAwait(false);
+            if (!s.DeploymentInProgress)
+                return s;
+            await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+            delayMs = Math.Min(delayMs + 500, 5000);
+        }
+
+        throw new OperationCanceledException(cancellationToken);
     }
 
     public async Task<DeployResult> DeployAsync(string composeYaml, CancellationToken cancellationToken = default)
@@ -50,12 +75,12 @@ public sealed class HttpDeployAgent : IDeployAgent
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Agent deploy failed ({(int)response.StatusCode}). {responseText}");
 
-        var result = JsonSerializer.Deserialize<DeployResult>(responseText, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        var result = JsonSerializer.Deserialize<DeployResult>(responseText, DeployJsonOptions);
 
-        return result ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        result ??= new DeployResult { Success = false, Error = "Empty agent response" };
+        if (result.OperationPending)
+            return await AwaitBackgroundDeploymentAsync(() => GetStatusAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+        return result;
     }
 
     public async Task<DeployResult> StartAsync(string? composeYaml = null, CancellationToken cancellationToken = default)
@@ -70,10 +95,11 @@ public sealed class HttpDeployAgent : IDeployAgent
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Agent start failed ({(int)response.StatusCode}). {responseText}");
 
-        return JsonSerializer.Deserialize<DeployResult>(responseText, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }) ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        var result = JsonSerializer.Deserialize<DeployResult>(responseText, DeployJsonOptions)
+                     ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        if (result.OperationPending)
+            return await AwaitBackgroundDeploymentAsync(() => GetStatusAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+        return result;
     }
 
     public async Task<DeployResult> StopAsync(bool removeVolumes = false, CancellationToken cancellationToken = default)
@@ -103,10 +129,11 @@ public sealed class HttpDeployAgent : IDeployAgent
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Agent restart failed ({(int)response.StatusCode}). {responseText}");
 
-        return JsonSerializer.Deserialize<DeployResult>(responseText, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }) ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        var result = JsonSerializer.Deserialize<DeployResult>(responseText, DeployJsonOptions)
+                     ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        if (result.OperationPending)
+            return await AwaitBackgroundDeploymentAsync(() => GetStatusAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+        return result;
     }
 
     public async Task<DeployResult> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -193,10 +220,16 @@ public sealed class HttpDeployAgent : IDeployAgent
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Agent start project failed ({(int)response.StatusCode}). {responseText}");
 
-        return JsonSerializer.Deserialize<DeployResult>(responseText, new JsonSerializerOptions
+        var result = JsonSerializer.Deserialize<DeployResult>(responseText, DeployJsonOptions)
+                     ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        if (result.OperationPending)
         {
-            PropertyNameCaseInsensitive = true
-        }) ?? new DeployResult { Success = false, Error = "Empty agent response" };
+            return await AwaitBackgroundDeploymentAsync(
+                () => GetProjectStatusAsync(projectName, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     public async Task<DeployResult> StopProjectAsync(string projectName, bool removeVolumes = false, CancellationToken cancellationToken = default)
@@ -232,10 +265,16 @@ public sealed class HttpDeployAgent : IDeployAgent
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Agent restart project failed ({(int)response.StatusCode}). {responseText}");
 
-        return JsonSerializer.Deserialize<DeployResult>(responseText, new JsonSerializerOptions
+        var result = JsonSerializer.Deserialize<DeployResult>(responseText, DeployJsonOptions)
+                     ?? new DeployResult { Success = false, Error = "Empty agent response" };
+        if (result.OperationPending)
         {
-            PropertyNameCaseInsensitive = true
-        }) ?? new DeployResult { Success = false, Error = "Empty agent response" };
+            return await AwaitBackgroundDeploymentAsync(
+                () => GetProjectStatusAsync(projectName, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     public async Task<DeployResult> GetProjectStatusAsync(string projectName, CancellationToken cancellationToken = default)
