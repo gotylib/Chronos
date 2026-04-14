@@ -6,7 +6,7 @@ name: Chronos.Core NuGet
 
 on:
   push:
-    branches: [master, main]
+    branches: [pack]
 
 permissions:
   contents: read
