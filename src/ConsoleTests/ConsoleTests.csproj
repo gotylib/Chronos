@@ -8,8 +8,8 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\src\Chronos.Core\Chronos.Core.csproj" />
-      <ProjectReference Include="..\src\SampleTests\SampleTests.csproj" />
+      <ProjectReference Include="..\Chronos.Core\Chronos.Core.csproj" />
+      <ProjectReference Include="..\SampleTests\SampleTests.csproj" />
     </ItemGroup>
 
 </Project>

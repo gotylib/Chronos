@@ -135,6 +135,10 @@ echo
 echo "Installed $SERVICE_NAME"
 echo "  Status:  systemctl status $SERVICE_NAME"
 echo "  Logs:    journalctl -u $SERVICE_NAME -f"
-echo "  Config:  $ENV_FILE"
+if [[ "$SKIP_ENV" == true ]]; then
+  echo "  Env:     $ENV_FILE — НЕ создан (--skip-env). Создай файл (см. deploy-linux/chronos-agent.env.example) или дождись конца setup-chronos-agent.sh"
+else
+  echo "  Config:  $ENV_FILE"
+fi
 [[ "$NO_START" == true ]] && echo "  Note:    service not started (--no-start); run: systemctl restart $SERVICE_NAME"
 echo

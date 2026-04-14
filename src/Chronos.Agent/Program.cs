@@ -199,6 +199,181 @@ static async Task<string> GetOrCreateAgentIdAsync(string appPath, string? config
     return id;
 }
 
+async Task GlobalComposeUpBackgroundAsync(string deploymentId, string workingDirectory, CancellationToken ct)
+{
+    await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        var up = await RunProcessAsync(dockerComposeExecutable,
+            $"-f \"{composeFileName}\" up -d",
+            workingDirectory: workingDirectory,
+            ct);
+
+        if (up.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, false, up.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, true, null, CancellationToken.None).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[agent] Background compose up failed: {ex}");
+        try
+        {
+            await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, false, ex.Message, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+    finally
+    {
+        deploymentLock.Release();
+    }
+}
+
+async Task GlobalRestartBackgroundAsync(string deploymentId, string workingDirectory, bool removeVolumes, CancellationToken ct)
+{
+    await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        var argsDown = $"-f \"{composeFileName}\" down";
+        if (removeVolumes)
+            argsDown += " -v";
+
+        var down = await RunProcessAsync(dockerComposeExecutable, argsDown, workingDirectory: workingDirectory, ct);
+        if (down.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, false, down.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        var up = await RunProcessAsync(dockerComposeExecutable,
+            $"-f \"{composeFileName}\" up -d",
+            workingDirectory: workingDirectory,
+            ct);
+
+        if (up.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, false, up.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, true, null, CancellationToken.None).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[agent] Background restart failed: {ex}");
+        try
+        {
+            await DeploymentStateHelper.CompleteAsync(workingDirectory, deploymentId, false, ex.Message, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+    finally
+    {
+        deploymentLock.Release();
+    }
+}
+
+async Task ProjectComposeUpBackgroundAsync(string projectName, string projectDir, string deploymentId, CancellationToken ct)
+{
+    await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        var up = await RunProcessAsync(dockerComposeExecutable,
+            $"-f \"{composeFileName}\" up -d",
+            workingDirectory: projectDir,
+            ct);
+
+        if (up.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, false, up.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        // Release clients polling DeploymentInProgress before manifest upload + startup checks (Publish pushes manifest after compose is up).
+        await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, true, null, CancellationToken.None).ConfigureAwait(false);
+        await DeploymentStateHelper.WaitForManifestUploadWindowAsync(projectDir, TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[agent] Background project start failed: {ex}");
+        try
+        {
+            await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, false, ex.Message, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+    finally
+    {
+        deploymentLock.Release();
+    }
+}
+
+async Task ProjectRestartBackgroundAsync(string projectName, string projectDir, string deploymentId, bool removeVolumes, CancellationToken ct)
+{
+    await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        var argsDown = $"-f \"{composeFileName}\" down";
+        if (removeVolumes)
+            argsDown += " -v";
+
+        var down = await RunProcessAsync(dockerComposeExecutable, argsDown, workingDirectory: projectDir, ct);
+        if (down.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, false, down.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        var up = await RunProcessAsync(dockerComposeExecutable,
+            $"-f \"{composeFileName}\" up -d",
+            workingDirectory: projectDir,
+            ct);
+
+        if (up.ExitCode != 0)
+        {
+            await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, false, up.Stderr, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, true, null, CancellationToken.None).ConfigureAwait(false);
+        await DeploymentStateHelper.WaitForManifestUploadWindowAsync(projectDir, TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[agent] Background project restart failed: {ex}");
+        try
+        {
+            await DeploymentStateHelper.CompleteAsync(projectDir, deploymentId, false, ex.Message, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+    finally
+    {
+        deploymentLock.Release();
+    }
+}
+
 app.MapPost("/deploy", async (HttpRequest request, CancellationToken ct) =>
 {
     if (!IsAuthorized(request, expectedApiKey))
@@ -215,36 +390,23 @@ app.MapPost("/deploy", async (HttpRequest request, CancellationToken ct) =>
         Directory.CreateDirectory(appPath);
         var composePath = Path.Combine(appPath, composeFileName);
         await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
-
-        // Run docker-compose up
-        var deployId = Guid.NewGuid().ToString("N");
-        var up = await RunProcessAsync(dockerComposeExecutable,
-            $"-f \"{composeFileName}\" up -d",
-            workingDirectory: appPath,
-            ct);
-
-        if (up.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                DeploymentId = deployId,
-                Success = false,
-                Error = up.Stderr
-            });
-        }
-
-        // Small delay to allow containers to start
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-
-        var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
-        status = await AttachDiagnosticsAsync(status, appPath, ct);
-        status.DeploymentId = deployId;
-        return Results.Json(status);
     }
     finally
     {
         deploymentLock.Release();
     }
+
+    var deployId = Guid.NewGuid().ToString("N");
+    await DeploymentStateHelper.WriteInProgressAsync(appPath, deployId, ct).ConfigureAwait(false);
+    _ = Task.Run(() => GlobalComposeUpBackgroundAsync(deployId, appPath, CancellationToken.None), CancellationToken.None);
+
+    return Results.Json(new DeployResult
+    {
+        Success = true,
+        DeploymentId = deployId,
+        OperationPending = true,
+        Message = "Compose deploy started. Poll GET /status for containers and diagnostics."
+    });
 });
 
 app.MapPost("/start", async (HttpRequest request, CancellationToken ct) =>
@@ -265,30 +427,26 @@ app.MapPost("/start", async (HttpRequest request, CancellationToken ct) =>
             await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
         }
 
-        Console.WriteLine("[agent] Running docker-compose up -d");
-        var up = await RunProcessAsync(dockerComposeExecutable,
-            $"-f \"{composeFileName}\" up -d",
-            workingDirectory: appPath,
-            ct);
-
-        if (up.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = up.Stderr
-            });
-        }
-
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
-        status = await AttachDiagnosticsAsync(status, appPath, ct);
-        return Results.Json(status);
+        if (!Directory.Exists(appPath) || !File.Exists(Path.Combine(appPath, composeFileName)))
+            return Results.Json(new DeployResult { Success = false, Error = $"Compose file '{composeFileName}' not found under app path." });
     }
     finally
     {
         deploymentLock.Release();
     }
+
+    Console.WriteLine("[agent] Queuing docker-compose up -d (async)");
+    var deployId = Guid.NewGuid().ToString("N");
+    await DeploymentStateHelper.WriteInProgressAsync(appPath, deployId, ct).ConfigureAwait(false);
+    _ = Task.Run(() => GlobalComposeUpBackgroundAsync(deployId, appPath, CancellationToken.None), CancellationToken.None);
+
+    return Results.Json(new DeployResult
+    {
+        Success = true,
+        DeploymentId = deployId,
+        OperationPending = true,
+        Message = "Compose start queued. Poll GET /status for containers and diagnostics."
+    });
 });
 
 app.MapPost("/stop", async (HttpRequest request, CancellationToken ct, bool removeVolumes = false) =>
@@ -346,44 +504,26 @@ app.MapPost("/restart", async (HttpRequest request, CancellationToken ct, bool r
             await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
         }
 
-        Console.WriteLine($"[agent] Restarting compose (down{(removeVolumes ? " -v" : "")} + up -d)");
-        var argsDown = $"-f \"{composeFileName}\" down";
-        if (removeVolumes)
-            argsDown += " -v";
-
-        var down = await RunProcessAsync(dockerComposeExecutable, argsDown, workingDirectory: appPath, ct);
-        if (down.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = down.Stderr
-            });
-        }
-
-        var up = await RunProcessAsync(dockerComposeExecutable,
-            $"-f \"{composeFileName}\" up -d",
-            workingDirectory: appPath,
-            ct);
-
-        if (up.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = up.Stderr
-            });
-        }
-
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, appPath, ct);
-        status = await AttachDiagnosticsAsync(status, appPath, ct);
-        return Results.Json(status);
+        if (!Directory.Exists(appPath) || !File.Exists(Path.Combine(appPath, composeFileName)))
+            return Results.Json(new DeployResult { Success = false, Error = $"Compose file '{composeFileName}' not found under app path." });
     }
     finally
     {
         deploymentLock.Release();
     }
+
+    Console.WriteLine($"[agent] Queuing compose restart (down{(removeVolumes ? " -v" : "")} + up -d)");
+    var deployId = Guid.NewGuid().ToString("N");
+    await DeploymentStateHelper.WriteInProgressAsync(appPath, deployId, ct).ConfigureAwait(false);
+    _ = Task.Run(() => GlobalRestartBackgroundAsync(deployId, appPath, removeVolumes, CancellationToken.None), CancellationToken.None);
+
+    return Results.Json(new DeployResult
+    {
+        Success = true,
+        DeploymentId = deployId,
+        OperationPending = true,
+        Message = "Compose restart queued. Poll GET /status for containers and diagnostics."
+    });
 });
 
 app.MapGet("/status", async (CancellationToken ct) =>
@@ -479,31 +619,27 @@ app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequ
             await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
         }
 
-        Console.WriteLine($"[agent] ({projectName}) docker-compose up -d");
-        var up = await RunProcessAsync(dockerComposeExecutable,
-            $"-f \"{composeFileName}\" up -d",
-            workingDirectory: projectDir,
-            ct);
-
-        if (up.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = up.Stderr
-            });
-        }
-
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct);
-        var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
-        status = await AttachDiagnosticsAsync(status, projectDir, ct);
-        return Results.Json(status);
+        if (!Directory.Exists(projectDir) || !File.Exists(Path.Combine(projectDir, composeFileName)))
+            return Results.Json(new DeployResult { Success = false, Error = $"Compose file '{composeFileName}' not found for project '{projectName}'." });
     }
     finally
     {
         deploymentLock.Release();
     }
+
+    var projectDirResolved = GetProjectDir(appPath, projectName);
+    Console.WriteLine($"[agent] ({projectName}) Queuing docker-compose up -d (async)");
+    var deployId = Guid.NewGuid().ToString("N");
+    await DeploymentStateHelper.WriteInProgressAsync(projectDirResolved, deployId, ct).ConfigureAwait(false);
+    _ = Task.Run(() => ProjectComposeUpBackgroundAsync(projectName, projectDirResolved, deployId, CancellationToken.None), CancellationToken.None);
+
+    return Results.Json(new DeployResult
+    {
+        Success = true,
+        DeploymentId = deployId,
+        OperationPending = true,
+        Message = $"Project start queued. Poll GET /projects/{projectName}/status for containers, jobs, and diagnostics."
+    });
 });
 
 app.MapPost("/projects/{projectName}/stop", async (string projectName, HttpRequest request, CancellationToken ct, bool removeVolumes = false) =>
@@ -564,46 +700,27 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
             await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
         }
 
-        Console.WriteLine($"[agent] ({projectName}) docker-compose restart");
-
-        var argsDown = $"-f \"{composeFileName}\" down";
-        if (removeVolumes)
-            argsDown += " -v";
-
-        var down = await RunProcessAsync(dockerComposeExecutable, argsDown, workingDirectory: projectDir, ct);
-        if (down.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = down.Stderr
-            });
-        }
-
-        var up = await RunProcessAsync(dockerComposeExecutable,
-            $"-f \"{composeFileName}\" up -d",
-            workingDirectory: projectDir,
-            ct);
-
-        if (up.ExitCode != 0)
-        {
-            return Results.Json(new DeployResult
-            {
-                Success = false,
-                Error = up.Stderr
-            });
-        }
-
-        await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        await AgentRoutes.RunStartupFromManifestAsync(projectName, projectDir, agentPaths, throttler, policy, ct);
-        var status = await GetStatusAsync(dockerComposeExecutable, composeFileName, projectDir, ct);
-        status = await AttachDiagnosticsAsync(status, projectDir, ct);
-        return Results.Json(status);
+        if (!Directory.Exists(projectDir) || !File.Exists(Path.Combine(projectDir, composeFileName)))
+            return Results.Json(new DeployResult { Success = false, Error = $"Compose file '{composeFileName}' not found for project '{projectName}'." });
     }
     finally
     {
         deploymentLock.Release();
     }
+
+    var projectDirResolved = GetProjectDir(appPath, projectName);
+    Console.WriteLine($"[agent] ({projectName}) Queuing docker-compose restart (async)");
+    var deployId = Guid.NewGuid().ToString("N");
+    await DeploymentStateHelper.WriteInProgressAsync(projectDirResolved, deployId, ct).ConfigureAwait(false);
+    _ = Task.Run(() => ProjectRestartBackgroundAsync(projectName, projectDirResolved, deployId, removeVolumes, CancellationToken.None), CancellationToken.None);
+
+    return Results.Json(new DeployResult
+    {
+        Success = true,
+        DeploymentId = deployId,
+        OperationPending = true,
+        Message = $"Project restart queued. Poll GET /projects/{projectName}/status for containers, jobs, and diagnostics."
+    });
 });
 
 app.MapGet("/projects/{projectName}/status", async (string projectName, CancellationToken ct) =>
@@ -760,5 +877,5 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
 static async Task<DeployResult> AttachDiagnosticsAsync(DeployResult status, string projectDir, CancellationToken ct)
 {
     status.Diagnostics = await AgentPersistence.LoadAsync(projectDir, ct).ConfigureAwait(false);
-    return status;
+    return await DeploymentStateHelper.AttachAsync(status, projectDir, ct).ConfigureAwait(false);
 }

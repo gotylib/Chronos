@@ -144,6 +144,18 @@ public sealed class DeployResult
     public string? Error { get; set; }
     public List<ContainerStatus> Containers { get; set; } = new();
     public DiagnosticsSnapshot? Diagnostics { get; set; }
+
+    /// <summary>
+    /// True when POST /deploy|/start|/restart accepted the work; use GET …/status to poll (see <see cref="DeploymentInProgress"/>).
+    /// </summary>
+    public bool OperationPending { get; set; }
+
+    /// <summary>
+    /// True while background compose/start/restart is still running on the agent.
+    /// </summary>
+    public bool DeploymentInProgress { get; set; }
+
+    public string? Message { get; set; }
 }
 
 public sealed class ValidationError
