@@ -24,6 +24,15 @@ ENV_DIR="${ENV_DIR:-/etc/chronos-agent}"
 SERVICE_NAME="${SERVICE_NAME:-chronos-agent}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -f "$SCRIPT_DIR/chronos-agent-lib.sh" ]]; then
+  # shellcheck source=chronos-agent-lib.sh
+  source "$SCRIPT_DIR/chronos-agent-lib.sh"
+  chronos_enable_err_trap
+else
+  chronos_step() { echo ""; echo "=== $* ==="; }
+  chronos_ok() { echo "  [OK] $*"; }
+fi
+
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
   echo
@@ -75,26 +84,33 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "$BUILD" == true ]]; then
+  chronos_step "dotnet publish (из исходников репозитория)"
   [[ -n "$REPO_ROOT" ]] || { echo "--repo-root required with --build" >&2; exit 1; }
   command -v dotnet >/dev/null 2>&1 || { echo "'dotnet' not found. Install .NET 8 SDK or use --publish-dir." >&2; exit 1; }
   TMP_PUBLISH="$(mktemp -d)"
   dotnet publish "$REPO_ROOT/src/Chronos.Agent/Chronos.Agent.csproj" -c Release -o "$TMP_PUBLISH"
   PUBLISH_DIR="$TMP_PUBLISH"
+  chronos_ok "publish готов"
 fi
 
 [[ -n "$PUBLISH_DIR" ]] || { echo "Specify --publish-dir DIR or --build --repo-root PATH" >&2; usage 1; }
 [[ -f "$PUBLISH_DIR/Chronos.Agent.dll" ]] || { echo "Chronos.Agent.dll not found in $PUBLISH_DIR" >&2; exit 1; }
 
+chronos_step "Пользователь chronos и группа docker"
 if ! id chronos &>/dev/null; then
   useradd --system --home-dir "$DATA_DIR" --create-home --shell /usr/sbin/nologin chronos
 fi
 
 usermod -aG docker chronos 2>/dev/null || echo "Warning: group 'docker' not found; add user chronos to docker group manually for compose access."
+chronos_ok "учётная запись готова"
 
+chronos_step "Каталоги $INSTALL_DIR, $DATA_DIR, $ENV_DIR"
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -d -o chronos -g chronos -m 0750 "$DATA_DIR"
 install -d -o root -g root -m 0755 "$ENV_DIR"
+chronos_ok "каталоги созданы"
 
+chronos_step "Копирование publish в $INSTALL_DIR"
 shopt -s nullglob
 rm -rf "${INSTALL_DIR:?}/"*
 shopt -u nullglob
@@ -104,9 +120,11 @@ chmod -R a+rX "$INSTALL_DIR"
 # Writable only where needed (logs, none by default in /opt)
 find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
 find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+chronos_ok "файлы агента на месте"
 
 ENV_FILE="$ENV_DIR/environment"
 ENV_EXAMPLE="$SCRIPT_DIR/chronos-agent.env.example"
+chronos_step "Файл environment (или пропуск при --skip-env)"
 if [[ "$SKIP_ENV" == true ]]; then
   echo "Skipping $ENV_FILE (create it before first start, or use setup-chronos-agent.sh)"
 elif [[ ! -f "$ENV_FILE" ]]; then
@@ -122,7 +140,9 @@ CHRONOS_AGENT_APP_PATH=$DATA_DIR" > "$ENV_FILE"
 else
   echo "Keeping existing $ENV_FILE"
 fi
+chronos_ok "environment обработан"
 
+chronos_step "Unit systemd и включение сервиса"
 install -m 0644 "$SCRIPT_DIR/chronos-agent.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 
 systemctl daemon-reload
@@ -130,7 +150,10 @@ systemctl enable "$SERVICE_NAME"
 if [[ "$NO_START" != true ]]; then
   systemctl restart "$SERVICE_NAME"
 fi
+chronos_ok "systemd настроен"
 
+echo ""
+echo "  [OK] install-chronos-agent.sh завершён успешно."
 echo
 echo "Installed $SERVICE_NAME"
 echo "  Status:  systemctl status $SERVICE_NAME"

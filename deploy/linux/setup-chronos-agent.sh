@@ -5,8 +5,10 @@
 # — распаковывает zip с GitHub Release и ставит systemd-сервис.
 #
 # Использование (root):
+#   sudo ./chronos-agent.sh [zip|каталог]   # то же, что setup (удобная обёртка)
 #   sudo ./setup-chronos-agent.sh [/path/to/chronos-agent-linux-x64.zip]
 #   sudo ./setup-chronos-agent.sh [/path/to/unzipped/folder]   # каталог, где лежит Chronos.Agent.dll
+# Рядом должен быть chronos-agent-lib.sh (входит в zip и репозиторий).
 #
 # Если аргумент не передан — спросит путь к zip или к распакованной папке.
 # Нужны: curl; unzip — только если указываешь .zip (при отсутствии попробует apt-get install unzip).
@@ -14,6 +16,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$SCRIPT_DIR/chronos-agent-lib.sh" ]] || {
+  echo "Нужен файл chronos-agent-lib.sh рядом с этим скриптом: $SCRIPT_DIR" >&2
+  exit 1
+}
+# shellcheck source=chronos-agent-lib.sh
+source "$SCRIPT_DIR/chronos-agent-lib.sh"
+chronos_enable_err_trap
+
 DOTNET_INSTALL_DIR="${DOTNET_INSTALL_DIR:-/usr/lib/dotnet}"
 SERVICE_NAME="${SERVICE_NAME:-chronos-agent}"
 ENV_DIR="/etc/chronos-agent"
@@ -98,25 +108,35 @@ write_environment() {
       [[ -n "$location" ]] && printf '%s\n' "CHRONOS_AGENT_LOCATION=${location}"
     fi
   } > "$tmp"
-  install -m 0640 -o root -g chronos "$tmp" "$ENV_FILE"
+  # root:root: пользователь chronos ещё может не существовать (запись до install-chronos-agent.sh).
+  # После установки файлов сервиса делаем chown root:chronos при необходимости.
+  install -m 0640 -o root -g root "$tmp" "$ENV_FILE"
   rm -f "$tmp"
   echo "Записан $ENV_FILE"
 }
 
 # --- main ---
+chronos_step "Источник установки (zip или каталог с Chronos.Agent.dll)"
 SRC="$(read_source_path "${1:-}")"
+chronos_ok "источник выбран"
+
 USE_DIR=false
 if [[ "$SRC" == DIR:* ]]; then
   EXTRACT="${SRC#DIR:}"
   USE_DIR=true
 else
   ZIP_PATH="${SRC#ZIP:}"
+  chronos_step "Утилита unzip (нужна для .zip)"
   ensure_unzip
+  chronos_ok "unzip доступен"
 fi
 
+chronos_step "Проверка .NET 8 (Microsoft.AspNetCore.App)"
 ensure_dotnet_runtime
+chronos_ok "runtime доступен"
 
 echo
+chronos_step "Параметры сервиса (порт, данные, API key, Master)"
 echo "=== Настройка агента (Enter = значение по умолчанию) ==="
 read -rp "Порт HTTP [5050]: " PORT
 PORT="${PORT:-5050}"
@@ -137,8 +157,10 @@ if [[ "${REG_MASTER:-}" =~ ^[Yy]$ ]]; then
   read -rp "API key Master (если нужен, иначе Enter): " MASTER_KEY
   read -rp "Метка локации (location, необязательно): " LOCATION
 fi
+chronos_ok "параметры введены"
 
 echo
+chronos_step "Распаковка и проверка файлов агента"
 if [[ "$USE_DIR" == true ]]; then
   echo "Используется каталог: $EXTRACT"
 else
@@ -152,25 +174,38 @@ fi
 [[ -f "$EXTRACT/deploy-linux/install-chronos-agent.sh" ]] || die "В архиве нет deploy-linux/install-chronos-agent.sh"
 
 chmod +x "$EXTRACT/deploy-linux/install-chronos-agent.sh"
+chronos_ok "Chronos.Agent.dll и deploy-linux на месте"
 
-echo "Установка файлов сервиса..."
+chronos_step "Запись $ENV_FILE (до копирования в /opt)"
+write_environment "$PORT" "$DATA_DIR_IN" "$API_KEY" "$MASTER_URL" "$AGENT_BASE" "$MASTER_KEY" "$LOCATION"
+chronos_ok "конфиг записан"
+
+chronos_step "Копирование в /opt и systemd (install-chronos-agent.sh)"
+echo "Сообщение install про «Skipping environment» ожидаемо: $ENV_FILE уже создан выше."
 # DATA_DIR для user chronos должен совпадать с install (useradd --home-dir)
 "$EXTRACT/deploy-linux/install-chronos-agent.sh" \
   --publish-dir "$EXTRACT" \
   --data-dir "$DATA_DIR_IN" \
   --skip-env \
   --no-start
+chronos_ok "файлы сервиса и unit установлены"
 
 if [[ "$USE_DIR" != true ]]; then
   trap - EXIT
   rm -rf "$EXTRACT"
 fi
 
-write_environment "$PORT" "$DATA_DIR_IN" "$API_KEY" "$MASTER_URL" "$AGENT_BASE" "$MASTER_KEY" "$LOCATION"
+chronos_step "Права на environment и запуск $SERVICE_NAME"
+if id chronos &>/dev/null && [[ -f "$ENV_FILE" ]]; then
+  chown root:chronos "$ENV_FILE" 2>/dev/null || true
+fi
 
 systemctl restart "$SERVICE_NAME"
+chronos_ok "сервис перезапущен"
 
-echo
+echo ""
+echo "  [OK] Установка завершена успешно."
+echo ""
 echo "Готово."
 echo "  Статус:  systemctl status $SERVICE_NAME"
 echo "  Логи:    journalctl -u $SERVICE_NAME -f"
