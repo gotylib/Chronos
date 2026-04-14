@@ -2,15 +2,12 @@
 # Установка на сервере: deploy/linux/setup-chronos-agent.sh (ставит runtime при необходимости, опрос настроек).
 #
 # Запуск:
-# - push в master/main → сборка + артефакт chronos-agent-linux-x64.zip (вкладка Actions)
 # - публикация GitHub Release → тот же zip прикрепляется к релизу
 # - workflow_dispatch → только артефакт
 
 name: Chronos Agent (publish zip)
 
 on:
-  push:
-    branches: [master, main]
   release:
     types: [published]
   workflow_dispatch:
