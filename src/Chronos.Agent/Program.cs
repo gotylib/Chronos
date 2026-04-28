@@ -3,8 +3,13 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Chronos.Agent;
+using Chronos.Agent.Api;
+using Chronos.Agent.Application;
+using Chronos.Agent.Domain.Entities;
+using Chronos.Agent.Infrastructure.Persistence;
 using Chronos.Core.Safety;
 using Chronos.Core;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +42,16 @@ var agentPaths = new AgentPaths
 };
 
 builder.Services.AddSingleton(agentPaths);
+
+var metadataConnectionString = ResolveAgentMetadataConnection(builder.Configuration, appPath);
+builder.Services.AddDbContext<ChronosAgentDbContext>((sp, opts) =>
+{
+    if (metadataConnectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
+        opts.UseNpgsql(metadataConnectionString);
+    else
+        opts.UseSqlite(metadataConnectionString);
+});
+
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(nameof(AgentRoutes));
 builder.Services.AddHttpClient(nameof(SchedulerHostedService));
@@ -68,6 +83,15 @@ builder.Services.AddSingleton<ExecutionThrottler>(sp =>
 });
 
 var app = builder.Build();
+
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var dbMeta = scope.ServiceProvider.GetRequiredService<ChronosAgentDbContext>();
+    if (metadataConnectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
+        await dbMeta.Database.MigrateAsync().ConfigureAwait(false);
+    else
+        await dbMeta.Database.EnsureCreatedAsync().ConfigureAwait(false);
+}
 
 var throttler = app.Services.GetRequiredService<ExecutionThrottler>();
 var policy = app.Services.GetRequiredService<ExecutionPolicyOptions>();
@@ -163,20 +187,6 @@ static bool IsAuthorized(HttpRequest request, string? expectedApiKey)
 
     return false;
 }
-
-static string SafeProjectName(string projectName)
-{
-    if (string.IsNullOrWhiteSpace(projectName))
-        throw new ArgumentException("projectName is required.");
-
-    if (projectName.Contains('/') || projectName.Contains('\\') || projectName.Contains(".."))
-        throw new ArgumentException("Invalid projectName.");
-
-    return projectName;
-}
-
-static string GetProjectDir(string baseDir, string projectName)
-    => Path.Combine(baseDir, SafeProjectName(projectName));
 
 static async Task<string> GetOrCreateAgentIdAsync(string appPath, string? configuredAgentId)
 {
@@ -572,7 +582,7 @@ app.MapGet("/projects", () =>
 
 app.MapGet("/projects/{projectName}/compose", async (string projectName) =>
 {
-    var projectDir = GetProjectDir(appPath, projectName);
+    var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
     var composePath = Path.Combine(projectDir, composeFileName);
     if (!File.Exists(composePath))
         return Results.NotFound();
@@ -591,7 +601,7 @@ app.MapPost("/projects/{projectName}/compose", async (string projectName, HttpRe
     if (string.IsNullOrWhiteSpace(composeYaml))
         return Results.BadRequest("Missing form field 'compose'.");
 
-    var projectDir = GetProjectDir(appPath, projectName);
+    var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
     Directory.CreateDirectory(projectDir);
     var composePath = Path.Combine(projectDir, composeFileName);
 
@@ -607,7 +617,7 @@ app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequ
     await deploymentLock.WaitAsync(ct);
     try
     {
-        var projectDir = GetProjectDir(appPath, projectName);
+        var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
 
         // Optional compose upload (makes /start usable right after generation).
         var form = await request.ReadFormAsync(ct);
@@ -627,7 +637,7 @@ app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequ
         deploymentLock.Release();
     }
 
-    var projectDirResolved = GetProjectDir(appPath, projectName);
+    var projectDirResolved = ProjectPaths.GetProjectDirectory(appPath, projectName);
     Console.WriteLine($"[agent] ({projectName}) Queuing docker-compose up -d (async)");
     var deployId = Guid.NewGuid().ToString("N");
     await DeploymentStateHelper.WriteInProgressAsync(projectDirResolved, deployId, ct).ConfigureAwait(false);
@@ -650,7 +660,7 @@ app.MapPost("/projects/{projectName}/stop", async (string projectName, HttpReque
     await deploymentLock.WaitAsync(ct);
     try
     {
-        var projectDir = GetProjectDir(appPath, projectName);
+        var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
         if (!Directory.Exists(projectDir))
             return Results.Json(new DeployResult { Success = false, Error = $"Project '{projectName}' not found." });
 
@@ -688,7 +698,7 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
     await deploymentLock.WaitAsync(ct);
     try
     {
-        var projectDir = GetProjectDir(appPath, projectName);
+        var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
 
         // Optional compose upload
         var form = await request.ReadFormAsync(ct);
@@ -708,7 +718,7 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
         deploymentLock.Release();
     }
 
-    var projectDirResolved = GetProjectDir(appPath, projectName);
+    var projectDirResolved = ProjectPaths.GetProjectDirectory(appPath, projectName);
     Console.WriteLine($"[agent] ({projectName}) Queuing docker-compose restart (async)");
     var deployId = Guid.NewGuid().ToString("N");
     await DeploymentStateHelper.WriteInProgressAsync(projectDirResolved, deployId, ct).ConfigureAwait(false);
@@ -725,7 +735,7 @@ app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRe
 
 app.MapGet("/projects/{projectName}/status", async (string projectName, CancellationToken ct) =>
 {
-    var projectDir = GetProjectDir(appPath, projectName);
+    var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
     if (!Directory.Exists(projectDir))
         return Results.Json(new DeployResult { Success = false, Error = $"Project '{projectName}' not found." });
 
@@ -736,7 +746,7 @@ app.MapGet("/projects/{projectName}/status", async (string projectName, Cancella
 
 app.MapGet("/projects/{projectName}/logs", async (string projectName, string? service, CancellationToken ct) =>
 {
-    var projectDir = GetProjectDir(appPath, projectName);
+    var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
     if (!Directory.Exists(projectDir))
         return Results.Problem($"Project '{projectName}' not found.", statusCode: 404);
 
@@ -757,7 +767,7 @@ app.MapGet("/projects/{projectName}/volumes", async (string projectName, HttpReq
     if (!IsAuthorized(request, expectedApiKey))
         return Results.Unauthorized();
 
-    var projectDir = GetProjectDir(appPath, projectName);
+    var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
     if (!Directory.Exists(projectDir))
         return Results.Json(new List<string>());
 
@@ -774,7 +784,66 @@ app.MapGet("/projects/{projectName}/volumes", async (string projectName, HttpReq
     return Results.Json(names);
 });
 
+app.MapGet("/projects/{projectName}/volume-archive-index", async (
+    string projectName,
+    ChronosAgentDbContext db,
+    HttpRequest request,
+    CancellationToken ct) =>
+{
+    if (!IsAuthorized(request, expectedApiKey))
+        return Results.Unauthorized();
+
+    var rows = await db.VolumeArchives.AsNoTracking()
+        .Where(v => v.ProjectName == projectName)
+        .OrderByDescending(v => v.CreatedUtc)
+        .ToListAsync(ct).ConfigureAwait(false);
+    return Results.Json(rows);
+});
+
+app.MapPost("/projects/{projectName}/volume-archives/register", async (
+    string projectName,
+    VolumeArchiveRegisterDto body,
+    ChronosAgentDbContext db,
+    HttpRequest request,
+    CancellationToken ct) =>
+{
+    if (!IsAuthorized(request, expectedApiKey))
+        return Results.Unauthorized();
+
+    if (string.IsNullOrWhiteSpace(body.VolumeName) || string.IsNullOrWhiteSpace(body.StoredRelativePath))
+        return Results.BadRequest("volumeName and storedRelativePath are required.");
+
+    db.VolumeArchives.Add(new VolumeArchiveEntity
+    {
+        Id = Guid.NewGuid(),
+        ProjectName = projectName,
+        VolumeName = body.VolumeName.Trim(),
+        StoredRelativePath = body.StoredRelativePath.Trim(),
+        BytesApprox = body.BytesApprox,
+        CompressMode = string.IsNullOrWhiteSpace(body.CompressMode) ? "gzip" : body.CompressMode.Trim(),
+        CreatedUtc = DateTimeOffset.UtcNow
+    });
+    await db.SaveChangesAsync(ct).ConfigureAwait(false);
+    return Results.Ok();
+});
+
 app.Run();
+
+static string ResolveAgentMetadataConnection(IConfiguration configuration, string agentAppPath)
+{
+    var cs =
+        configuration.GetConnectionString("AgentMetadata")
+        ?? configuration["ConnectionStrings__AgentMetadata"];
+
+    if (!string.IsNullOrWhiteSpace(cs))
+        return cs;
+
+    var path = configuration["CHRONOS_AGENT_METADATA_DB"]
+        ?? Path.Combine(agentAppPath, ".chronos", "metadata.db");
+
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    return $"Data Source={path}";
+}
 
 static List<ContainerStatus> ParseContainerStatuses(string json)
 {

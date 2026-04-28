@@ -1,5 +1,5 @@
 # Один zip: framework-dependent (нужен .NET 8 runtime на сервере) — совместим с кодовыми jobs/тестами.
-# Установка на сервере: deploy/linux/setup-chronos-agent.sh (ставит runtime при необходимости, опрос настроек).
+# Zip без shell-скриптов установки — используйте Docker (deploy/docker) или свой процесс деплоя.
 #
 # Запуск:
 # - публикация GitHub Release → тот же zip прикрепляется к релизу
@@ -28,11 +28,10 @@ jobs:
       - name: dotnet publish (framework-dependent)
         run: dotnet publish src/Chronos.Agent/Chronos.Agent.csproj -c Release -o ./publish
 
-      - name: Bundle zip + deploy/linux
+      - name: Bundle zip
         run: |
           mkdir -p bundle
           cp -a publish/. bundle/
-          cp -a deploy/linux bundle/deploy-linux
           (cd bundle && zip -r ../chronos-agent-linux-x64.zip .)
 
       - name: Upload artifact (push / manual)

@@ -36,6 +36,9 @@ public sealed class Service
     public Dictionary<string, string> ExtraHosts { get; } = new();
     public List<string> Capabilities { get; } = new();
 
+    /// <summary><c>security_opt</c> в compose (например <c>label=disable</c>, <c>seccomp=unconfined</c> для Podman).</summary>
+    public List<string> SecurityOpt { get; } = new();
+
     public string? User { get; set; }
     public string? WorkingDir { get; set; }
 

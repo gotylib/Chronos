@@ -11,6 +11,9 @@ public sealed class TestAttribute : Attribute
     public TestCriticality Criticality { get; set; } = TestCriticality.Warning;
     public bool OnStartup { get; set; } = true;
     public int? IntervalMinutes { get; set; }
+
+    /// <summary>Меньше — раньше (например 0 = до остальных проверок).</summary>
+    public int Order { get; set; } = 100;
 }
 
 /// <summary>Контекст для методов с <see cref="TestAttribute"/>.</summary>
@@ -34,6 +37,21 @@ public sealed class ComposeTestContext
             ProjectName,
             ServiceName,
             shellCommand,
+            cancellationToken);
+
+    /// <summary>
+    /// Выполняет compose с хоста (как <c>docker compose -f … -p … &lt;args&gt;</c>): restart, pull, и т.д.
+    /// Без <c>-it</c> — для сценариев вроде «docker compose restart» после <c>docker exec … update-permissions</c>.
+    /// </summary>
+    public Task<(int ExitCode, string Stdout, string Stderr)> RunComposeAsync(
+        string composeArguments,
+        CancellationToken cancellationToken = default)
+        => ComposeHost.RunComposeAsync(
+            DockerComposeExecutable,
+            ComposeWorkingDirectory,
+            ComposeFileName,
+            ProjectName,
+            composeArguments,
             cancellationToken);
 }
 
@@ -67,6 +85,10 @@ public sealed class CodeTestEntry
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public TestCriticality Criticality { get; set; } = TestCriticality.Warning;
+
+    /// <summary>Порядок запуска (меньше — раньше). По умолчанию 100.</summary>
+    [JsonPropertyName("order")]
+    public int Order { get; set; } = 100;
 }
 
 /// <summary>Регистрация класса с методами <see cref="TestAttribute"/> на сервисе.</summary>
@@ -87,7 +109,7 @@ public static class CodeTestRegistration
         var deployRel = $"tests/{asmFile}".Replace('\\', '/');
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        var any = false;
+        var methods = new List<(MethodInfo Method, TestAttribute Attr)>();
         foreach (var method in type.GetMethods(flags))
         {
             var attr = method.GetCustomAttribute<TestAttribute>();
@@ -95,6 +117,18 @@ public static class CodeTestRegistration
                 continue;
 
             ValidateSignature(method, type);
+            methods.Add((method, attr));
+        }
+
+        methods.Sort((a, b) =>
+        {
+            var c = a.Attr.Order.CompareTo(b.Attr.Order);
+            return c != 0 ? c : string.Compare(a.Method.Name, b.Method.Name, StringComparison.OrdinalIgnoreCase);
+        });
+
+        var any = false;
+        foreach (var (method, attr) in methods)
+        {
             any = true;
             var id = string.IsNullOrWhiteSpace(attr.Id) ? method.Name : attr.Id!;
             service.CodeTests.Add(new CodeTestEntry
@@ -106,7 +140,8 @@ public static class CodeTestRegistration
                 LocalAssemblyPath = asmPath,
                 OnStartup = attr.OnStartup,
                 IntervalMinutes = attr.IntervalMinutes,
-                Criticality = attr.Criticality
+                Criticality = attr.Criticality,
+                Order = attr.Order
             });
         }
 

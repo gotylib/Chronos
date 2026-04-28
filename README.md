@@ -28,8 +28,10 @@
   - умеет запускать/останавливать/перезапускать проект через `docker-compose`
   - отдаёт список проектов и возвращает compose по `projectName`
   - манифест/артефакты/volumes/diagnostics: `AgentRoutes`, `SchedulerHostedService`, `AgentPersistence`
-  - **Linux как сервис:** `deploy/linux/` — `setup-chronos-agent.sh` (интерактив: runtime .NET 8 при необходимости, порт, API key, Master), `install-chronos-agent.sh` (ручная установка), systemd unit. Сборка в CI — один zip **framework-dependent** (нужен runtime на сервере), чтобы **кодовые jobs/тесты** с подгрузкой DLL работали стабильно.
-  - **Zip с GitHub:** [`.github/workflows/chronos-agent-release.yml`](.github/workflows/chronos-agent-release.yml) — при каждом **push** в `master`/`main` собирает `chronos-agent-linux-x64.zip` и кладёт в **артефакты** workflow; при **публикации Release** прикрепляет тот же файл к релизу.
+  - **Метаданные (EF):** метаданные архивов volume в **PostgreSQL** (в Docker: `ConnectionStrings:AgentMetadata`); для локального dev без PG fallback — SQLite в `…/.chronos/metadata.db`.
+  - **Тестовый стек:** [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml) — Postgres (две БД: `chronos_master`, `chronos_agent`), Traefik, `Chronos.Master`, `Chronos.Agent` с `docker.sock`.
+  - **UI:** [`src/Chronos.Master.Web`](src/Chronos.Master.Web) (React + Tailwind 4, `npm run dev` + прокси на Master).
+  - **Zip с GitHub:** [`.github/workflows/chronos-agent-release.yml`](.github/workflows/chronos-agent-release.yml) — `chronos-agent-linux-x64.zip` (только `publish/`, без shell-установщиков); при **Release** прикрепляется к релизу.
 
 - `src/Chronos.Cli` — консольный CLI (ручная проверка “end-to-end”)
   - генерирует sample compose, валидирует, опционально запускает локальный тест и/или пушит на агент
@@ -42,36 +44,32 @@
 - Docker Compose CLI: поддерживаются и `docker-compose` (v1), и `docker compose` (v2)
 - .NET SDK
 
-### Агент на сервер без клона репо (GitHub)
+### Рекомендуемый способ: Docker (master + agent + обе БД + Traefik)
 
-1. Скачай **`chronos-agent-linux-x64.zip`**: со страницы **Releases** (если опубликовал релиз), либо **Actions** → последний успешный run **Chronos Agent (publish zip)** после пуша в `master`/`main`, либо **Run workflow** вручную.
-2. На сервере нужен **Docker** (и пользователь сервиса в группе `docker`). **.NET 8 runtime** скрипт поставит сам, если спросишь.
-3. Распакуй zip **куда удобно** (достаточно одного каталога с архивом) и запусти мастер:
+Из корня репозитория:
 
 ```bash
-curl -sLO https://github.com/<org>/<repo>/releases/download/<tag>/chronos-agent-linux-x64.zip
-unzip chronos-agent-linux-x64.zip -d /tmp/chronos-agent
-chmod +x /tmp/chronos-agent/deploy-linux/setup-chronos-agent.sh
-sudo /tmp/chronos-agent/deploy-linux/setup-chronos-agent.sh /tmp/chronos-agent
+docker compose -f deploy/docker/docker-compose.yml up --build
 ```
 
-Второй аргумент — уже распакованная папка (где лежит `Chronos.Agent.dll`). Можно вместо этого передать путь к `.zip` — скрипт распакует во временный каталог. Без аргумента спросит путь. Дальше: при необходимости установка **.NET 8 runtime**, вопросы про **порт**, **каталог данных**, **API key**, опционально **Master**.
+- Master: `http://localhost:5000` (миграции EF, PostgreSQL `chronos_master`)
+- Agent: `http://localhost:5001` (миграции EF, PostgreSQL `chronos_agent`, `docker.sock` хоста)
+- UI (встроен в образ Master): `http://localhost:5000/ui`
+- Для отдельной разработки фронта: `cd src/Chronos.Master.Web && npm install && npm run dev` (Vite, `http://localhost:5173/ui`)
 
-Ручная установка без мастера: `deploy/linux/install-chronos-agent.sh` и правка `/etc/chronos-agent/environment` (см. `chronos-agent.env.example`).
+### Классический zip-релиз агента (свой хостинг)
+
+1. Скачай **`chronos-agent-linux-x64.zip`** (Releases / Actions). Внутри — опубликованные DLL; на целевой машине нужны **.NET 8 runtime**, **Docker** и **PostgreSQL** (строка `ConnectionStrings:AgentMetadata` для миграций), либо укажи SQLite: `Data Source=...` в `ConnectionStrings:AgentMetadata` / `CHRONOS_AGENT_METADATA_DB`.
+2. Запуск: `dotnet Chronos.Agent.dll` с переменными как в примерах ниже (см. также `deploy/docker`).
 
 ## Быстрый старт (локально)
 
-### Альтернатива: одной командой поднять master+agent
+### Альтернатива: скрипт `cluster-up` (нужен локальный PostgreSQL)
+
+Master хранит состояние в **PostgreSQL**. Перед `./scripts/cluster-up.ps1` подними Postgres (например контейнером или из `deploy/docker` только сервис `postgres`) и проверь `ConnectionStrings:Chronos` в `appsettings.Development.json`.
 
 ```powershell
 .\scripts\cluster-up.ps1 -Agents 1
-```
-
-Linux/macOS:
-
-```bash
-chmod +x ./scripts/cluster-up.sh
-./scripts/cluster-up.sh 1
 ```
 
 ### Bootstrap из Git-репозитория (массовый deploy)
@@ -108,13 +106,20 @@ dotnet run --project "src/Chronos.Cli/Chronos.Cli.csproj" -- bootstrap --repo <g
 
 ### 0) Запуск Master
 
-В отдельной консоли:
+Нужен **PostgreSQL** и строка `ConnectionStrings:Chronos` (см. `src/Chronos.Master/appsettings.Development.json`). В отдельной консоли:
 
 ```powershell
 dotnet run --project "src/Chronos.Master/Chronos.Master.csproj" -- --urls http://0.0.0.0:5000
 ```
 
-UI мастера (Blazor): `http://localhost:5000/ui/app`
+Web UI: React-приложение в `src/Chronos.Master.Web` (Tailwind 4 + React Router + React Flow), в Docker отдаётся Master-нодой по `http://localhost:5000/ui`.
+Основные разделы UI:
+- `Dashboard` — обзор кластера
+- `Agents` — статус агентов (heartbeat cpu/memory/disk)
+- `Projects` / `Project details` — статус проекта, diagnostics (tests/jobs), stop/restart
+- `Network map` — визуальный граф сервисов/сетей/томов из compose
+- `Routing` — управление Traefik file-provider маршрутами
+- `Sandbox` — validate YAML, Fluent preview, deploy/publish в кластер
 
 Новые API мастера:
 - `POST /cluster/deploy` — smart selection агента + старт проекта
@@ -125,6 +130,18 @@ UI мастера (Blazor): `http://localhost:5000/ui/app`
 - `POST /cluster/projects/{projectName}/stop?removeVolumes=true|false`
 - `POST /cluster/projects/{projectName}/restart?removeVolumes=true|false`
 - `GET /cluster/projects/{projectName}/volumes`
+
+UI/API v1 (для веб-интерфейса):
+- `POST /api/v1/compose/graph` — построение графа (services/networks/volumes) из compose YAML
+- `GET /api/v1/cluster/projects/{projectName}/diagnostics` — diagnostics агента (`/chronos/diagnostics`)
+- `GET /api/v1/cluster/projects/{projectName}/full-status` — агрегированный статус + diagnostics
+- `GET /api/v1/traefik/routes` — список динамических Traefik route-файлов
+- `POST /api/v1/traefik/routes` — upsert маршрута (`routeName`, `rule`, `backendUrls[]`)
+- `DELETE /api/v1/traefik/routes/{routeName}` — удаление маршрута
+- `POST /api/v1/sandbox/fluent-preview` — Roslyn preview Fluent-кода (`IBuiltCompose` + validate + YAML preview)
+
+Фичу Fluent sandbox можно включить переменной:
+- `CHRONOS_MASTER_FLUENT_SANDBOX_ENABLED=1`
 
 ### 1) Запуск агента
 

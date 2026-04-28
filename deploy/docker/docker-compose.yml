@@ -1,0 +1,84 @@
+# Stack: Postgres + Traefik (file provider) + Chronos.Master + Chronos.Agent
+# From repo root: docker compose -f deploy/docker/docker-compose.yml up --build
+name: chronos
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chronos
+      POSTGRES_PASSWORD: chronos
+      POSTGRES_DB: chronos_master
+    volumes:
+      - chronos_pg:/var/lib/postgresql/data
+      - ./postgres/02-chronos-agent.sql:/docker-entrypoint-initdb.d/02-chronos-agent.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chronos -d chronos_master"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  traefik:
+    image: traefik:v3.2
+    command:
+      - --providers.file.directory=/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --ping=true
+    ports:
+      - "9080:80"
+      - "9090:8080"
+    volumes:
+      - traefik_dynamic:/dynamic
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  chronos-master:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.master
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      CHRONOS_MASTER_FLUENT_SANDBOX_ENABLED: "1"
+      ConnectionStrings__Chronos: Host=postgres;Port=5432;Database=chronos_master;Username=chronos;Password=chronos
+      CHRONOS_TRAEFIK_DYNAMIC_DIR: /traefik-dynamic
+      CHRONOS_MASTER_INSTANCE_ID: docker-master-1
+    volumes:
+      - traefik_dynamic:/traefik-dynamic
+    ports:
+      - "5000:8080"
+
+  chronos-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chronos-master:
+        condition: service_started
+    environment:
+      CHRONOS_AGENT_APP_PATH: /app/data
+      CHRONOS_MASTER_URL: http://chronos-master:8080
+      CHRONOS_AGENT_BASE_URL: http://chronos-agent:8080
+      CHRONOS_MASTER_INSTANCE_ID: docker-master-1
+      ConnectionStrings__AgentMetadata: Host=postgres;Port=5432;Database=chronos_agent;Username=chronos;Password=chronos
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - chronos_agent_data:/app/data
+    ports:
+      - "5001:8080"
+
+volumes:
+  chronos_pg: {}
+  traefik_dynamic: {}
+  chronos_agent_data: {}

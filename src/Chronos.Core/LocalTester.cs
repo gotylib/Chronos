@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Polly;
@@ -181,7 +182,11 @@ public sealed class LocalTester
 
     private Task RunComposeUpAsync(TestOptions options, CancellationToken ct)
     {
-        var args = $"-f \"{_composeFilePath}\" -p {options.ProjectName} up -d";
+        // --progress plain: глобальный флаг `docker compose` (до подкоманды up), иначе CLI пишет «unknown flag: --progress».
+        var progress = options.DockerComposeExecutable.Trim().Equals("docker compose", StringComparison.OrdinalIgnoreCase)
+            ? "--progress plain "
+            : "";
+        var args = $"{progress}-f \"{_composeFilePath}\" -p {options.ProjectName} up -d";
         return RunProcessAsync(options.DockerComposeExecutable, args, ct);
     }
 
@@ -254,7 +259,10 @@ public sealed class LocalTester
             if (health != null)
             {
                 healthStatus = health.Status;
-                isHealthy = string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase);
+                // If caller doesn't require healthchecks, treat "running" as OK even when health is "starting".
+                if (options.RequireHealthChecksIfDefined)
+                    isHealthy = string.Equals(health.Status, "healthy", StringComparison.OrdinalIgnoreCase);
+
                 error = health.Log?.LastOrDefault()?.Output;
             }
 
@@ -306,18 +314,26 @@ public sealed class LocalTester
         };
 
         using var process = new Process { StartInfo = psi };
-        process.Start();
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data != null)
+                Console.WriteLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data != null)
+                Console.WriteLine(e.Data);
+        };
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
         await process.WaitForExitAsync(ct);
 
-        var stderr = await stderrTask;
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"Command '{resolvedFileName} {resolvedArgs}' failed (exit code {process.ExitCode}). {stderr}");
-
-        _ = await stdoutTask;
+            throw new InvalidOperationException(
+                $"Command '{resolvedFileName} {resolvedArgs}' failed (exit code {process.ExitCode}). See compose output above.");
     }
 
     private async Task<string> RunProcessCaptureOutputAsync(string fileName, string args, CancellationToken ct)
@@ -336,21 +352,36 @@ public sealed class LocalTester
             CreateNoWindow = true
         };
 
-        using var process = new Process { StartInfo = psi };
-        process.Start();
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        using var process = new Process { StartInfo = psi };
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null)
+                return;
+            Console.WriteLine(e.Data);
+            stdout.AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null)
+                return;
+            Console.WriteLine(e.Data);
+            stderr.AppendLine(e.Data);
+        };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
         await process.WaitForExitAsync(ct);
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"Command '{resolvedFileName} {resolvedArgs}' failed (exit code {process.ExitCode}). {stderr}");
+            throw new InvalidOperationException(
+                $"Command '{resolvedFileName} {resolvedArgs}' failed (exit code {process.ExitCode}). {stderr}");
 
-        return stdout;
+        return stdout.ToString();
     }
 
     private async Task RunStartupDeclarativeChecksAsync(TestResult result, TestOptions options, CancellationToken cancellationToken)

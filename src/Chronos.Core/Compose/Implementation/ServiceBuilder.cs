@@ -151,6 +151,13 @@ public sealed class ServiceBuilder : IServiceBuilder
         return this;
     }
 
+    public ServiceBuilder AddSecurityOption(string option)
+    {
+        if (!string.IsNullOrWhiteSpace(option))
+            _service.SecurityOpt.Add(option.Trim());
+        return this;
+    }
+
     public ServiceBuilder AddExtraHost(string hostname, string ip)
     {
         _service.ExtraHosts[hostname] = ip;
@@ -264,6 +271,7 @@ public sealed class ServiceBuilder : IServiceBuilder
     IServiceBuilder IServiceBuilder.WithUser(string user) => WithUser(user);
     IServiceBuilder IServiceBuilder.WithWorkingDirectory(string path) => WithWorkingDirectory(path);
     IServiceBuilder IServiceBuilder.AddCapability(params string[] capabilities) => AddCapability(capabilities);
+    IServiceBuilder IServiceBuilder.AddSecurityOption(string option) => AddSecurityOption(option);
     IServiceBuilder IServiceBuilder.AddExtraHost(string hostname, string ip) => AddExtraHost(hostname, ip);
     IServiceBuilder IServiceBuilder.WithLogging(string driver, Dictionary<string, string>? options) => WithLogging(driver, options);
     IServiceBuilder IServiceBuilder.WithInit(bool init) => WithInit(init);

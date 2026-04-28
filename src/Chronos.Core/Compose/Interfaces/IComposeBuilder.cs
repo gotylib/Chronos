@@ -1,3 +1,5 @@
+using Chronos.Core;
+
 namespace Chronos.Core.Compose.Interfaces;
 
 /// <summary>
@@ -22,6 +24,8 @@ public interface IComposeBuilder
     IComposeBuilder AddConfig(Config config);
     IComposeBuilder AddExtension(string key, object value);
 
+    IComposeBuilder WithReplicaPolicy(ReplicaPolicy policy);
+
     /// <summary>Ship a file next to compose on the agent (packed into a tar upload on publish).</summary>
     IComposeBuilder AddDeployArtifactFromFile(string deployRelativePath, string sourceFilePath, int? unixFileMode = null);
 
@@ -32,6 +36,9 @@ public interface IComposeBuilder
     string SerializeManifestJson();
     bool HasManifestPayload();
     IReadOnlyList<DeployArtifact> GetDeployArtifacts();
+
+    /// <summary>Clone the current compose model into a runnable snapshot (<see cref="IBuiltCompose"/>).</summary>
+    IBuiltCompose Build();
 
     string GenerateYaml();
     Task SaveToFileAsync(string path, CancellationToken cancellationToken = default);

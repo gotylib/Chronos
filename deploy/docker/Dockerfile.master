@@ -1,0 +1,27 @@
+# Chronos.Master — SPA (Vite) + ASP.NET publish
+FROM node:20-alpine AS webbuild
+WORKDIR /web
+COPY src/Chronos.Master.Web/package.json src/Chronos.Master.Web/package-lock.json ./
+RUN npm ci --no-audit
+COPY src/Chronos.Master.Web/ .
+RUN npm run build
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY Chronos.sln .
+COPY src/Chronos.Core/Chronos.Core.csproj src/Chronos.Core/
+COPY src/Chronos.Master/Chronos.Master.csproj src/Chronos.Master/
+RUN dotnet restore src/Chronos.Master/Chronos.Master.csproj
+COPY src/Chronos.Core/ src/Chronos.Core/
+COPY src/Chronos.Master/ src/Chronos.Master/
+COPY --from=webbuild /web/dist src/Chronos.Master/wwwroot/ui/
+WORKDIR /src/src/Chronos.Master
+RUN dotnet publish -c Release -o /app/publish --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+COPY --from=build /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "Chronos.Master.dll"]

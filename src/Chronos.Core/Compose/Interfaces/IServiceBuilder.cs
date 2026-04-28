@@ -25,6 +25,7 @@ public interface IServiceBuilder
     IServiceBuilder WithUser(string user);
     IServiceBuilder WithWorkingDirectory(string path);
     IServiceBuilder AddCapability(params string[] capabilities);
+    IServiceBuilder AddSecurityOption(string option);
     IServiceBuilder AddExtraHost(string hostname, string ip);
     IServiceBuilder WithLogging(string driver, Dictionary<string, string>? options = null);
     IServiceBuilder WithInit(bool init);

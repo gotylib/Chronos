@@ -15,7 +15,6 @@ public static class AssemblySafety
         "System.Net.Sockets",
         "System.Runtime.InteropServices",
         "DllImport",
-        "unsafe",
     ];
 
     public static bool ValidateAssemblyPath(string assemblyPath, out string? reason)

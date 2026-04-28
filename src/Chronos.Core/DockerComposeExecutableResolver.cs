@@ -3,8 +3,10 @@ using System.Diagnostics;
 namespace Chronos.Core;
 
 /// <summary>
-/// Picks <c>docker compose</c> (plugin v2) or <c>docker-compose</c> (v1) by probing the local machine.
-/// Use configured value <c>auto</c> / empty to enable detection; any other string is used as-is.
+/// Picks a working Compose CLI by probing the local machine: prefers <c>docker compose</c> only when
+/// a Docker daemon answers <c>docker info</c>; otherwise tries <c>podman compose</c> (Podman Desktop / Linux
+/// without DOCKER_HOST), then <c>docker-compose</c> (v1). Use configured value <c>auto</c> / empty to enable
+/// detection; any other string is used as-is.
 /// </summary>
 public static class DockerComposeExecutableResolver
 {
@@ -38,11 +40,17 @@ public static class DockerComposeExecutableResolver
 
     private static string Detect()
     {
-        if (TryExitZero("docker", "compose version", ProbeTimeout))
+        // `docker compose version` succeeds without a reachable engine (client-only). Require `docker info`.
+        if (TryExitZero("docker", "info", ProbeTimeout) &&
+            TryExitZero("docker", "compose version", ProbeTimeout))
             return "docker compose";
+
+        if (TryExitZero("podman", "compose version", ProbeTimeout))
+            return "podman compose";
+
         if (TryExitZero("docker-compose", "version", ProbeTimeout))
             return "docker-compose";
-        // Prefer v2 spelling; docker CLI is usually present even if compose subcommand fails elsewhere.
+
         return "docker compose";
     }
 
@@ -64,11 +72,16 @@ public static class DockerComposeExecutableResolver
             };
 
             p.Start();
+            // Drain pipes in parallel with WaitForExit; otherwise a verbose `docker info` can fill buffers and deadlock.
+            var drainOut = Task.Run(() => { try { p.StandardOutput.ReadToEnd(); } catch { /* ignore */ } });
+            var drainErr = Task.Run(() => { try { p.StandardError.ReadToEnd(); } catch { /* ignore */ } });
             if (!p.WaitForExit((int)timeout.TotalMilliseconds))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return false;
             }
+
+            Task.WaitAll(drainOut, drainErr);
 
             return p.ExitCode == 0;
         }

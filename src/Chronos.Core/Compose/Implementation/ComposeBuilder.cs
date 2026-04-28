@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Chronos.Core;
 using Chronos.Core.Compose.Interfaces;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -19,11 +20,57 @@ public sealed class ComposeBuilder : IComposeBuilder
     private readonly Dictionary<string, object> _xFields = new();
     private readonly List<DeployArtifact> _deployArtifacts = new();
 
+    private ReplicaPolicy? _replicaPolicy;
+
     // local runtime settings (NOT used by agent remote endpoints)
     private string _composeFilePath = "docker-compose.yml";
     private string _projectName = "chronos";
     /// <summary><c>auto</c> = detect <c>docker compose</c> vs <c>docker-compose</c> on this machine.</summary>
     private string _dockerComposeExecutable = "auto";
+
+    public ComposeBuilder()
+    {
+    }
+
+    /// <summary>Shallow snapshot for <see cref="Build"/>.</summary>
+    internal ComposeBuilder(ComposeBuilder other)
+    {
+        _version = other._version;
+        _composeFilePath = other._composeFilePath;
+        _projectName = other._projectName;
+        _dockerComposeExecutable = other._dockerComposeExecutable;
+
+        foreach (var kv in other._services)
+            _services[kv.Key] = kv.Value;
+        foreach (var kv in other._networks)
+            _networks[kv.Key] = kv.Value;
+        foreach (var kv in other._volumes)
+            _volumes[kv.Key] = kv.Value;
+        foreach (var kv in other._secrets)
+            _secrets[kv.Key] = kv.Value;
+        foreach (var kv in other._configs)
+            _configs[kv.Key] = kv.Value;
+        foreach (var kv in other._xFields)
+            _xFields[kv.Key] = kv.Value;
+        _deployArtifacts.AddRange(other._deployArtifacts);
+        if (other._replicaPolicy is not null)
+        {
+            _replicaPolicy = new ReplicaPolicy
+            {
+                Count = other._replicaPolicy.Count,
+                PortOffsetPerReplica = other._replicaPolicy.PortOffsetPerReplica
+            };
+            foreach (var v in other._replicaPolicy.SharedNamedVolumes)
+                _replicaPolicy.SharedNamedVolumes.Add(v);
+        }
+    }
+
+    /// <summary>Declare replica intent for Chronos Master (YAML extension <c>x-chronos-replicas</c>).</summary>
+    public ComposeBuilder WithReplicaPolicy(ReplicaPolicy policy)
+    {
+        _replicaPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
+        return this;
+    }
 
     public ComposeBuilder WithVersion(string version)
     {
@@ -177,6 +224,113 @@ public sealed class ComposeBuilder : IComposeBuilder
 
     public IReadOnlyList<DeployArtifact> GetDeployArtifacts() => _deployArtifacts;
 
+    /// <inheritdoc cref="IComposeBuilder.Build"/>
+    public BuiltCompose Build() => new(new ComposeBuilder(this));
+
+    /// <summary>Dependency / network graph for UI visualization.</summary>
+    public ComposeGraphDto DescribeGraph()
+    {
+        var nodes = new List<ComposeGraphNode>();
+        var edges = new List<ComposeGraphEdge>();
+
+        foreach (var (netName, _) in _networks)
+            nodes.Add(new ComposeGraphNode
+            {
+                Id = $"net:{netName}",
+                Label = netName,
+                Kind = "network",
+                Subtitle = "network"
+            });
+
+        foreach (var (volName, _) in _volumes)
+            nodes.Add(new ComposeGraphNode
+            {
+                Id = $"vol:{volName}",
+                Label = volName,
+                Kind = "volume",
+                Subtitle = "named volume"
+            });
+
+        foreach (var (svcName, svc) in _services)
+        {
+            nodes.Add(new ComposeGraphNode
+            {
+                Id = $"svc:{svcName}",
+                Label = svcName,
+                Kind = "service",
+                Subtitle = svc.Image ?? svc.BuildContext ?? "service"
+            });
+
+            foreach (var dep in svc.DependsOn)
+                edges.Add(new ComposeGraphEdge
+                {
+                    From = $"svc:{svcName}",
+                    To = $"svc:{dep}",
+                    Kind = "depends_on"
+                });
+
+            foreach (var net in svc.Networks)
+                edges.Add(new ComposeGraphEdge
+                {
+                    From = $"svc:{svcName}",
+                    To = $"net:{net}",
+                    Kind = "network"
+                });
+
+            foreach (var volRaw in svc.Volumes)
+            {
+                var named = NamedVolumeSource(volRaw);
+                if (!string.IsNullOrEmpty(named))
+                    edges.Add(new ComposeGraphEdge
+                    {
+                        From = $"svc:{svcName}",
+                        To = $"vol:{named}",
+                        Kind = "volume"
+                    });
+            }
+        }
+
+        var idSet = new HashSet<string>(nodes.Select(n => n.Id));
+        foreach (var e in edges)
+        {
+            foreach (var id in new[] { e.From, e.To })
+            {
+                if (idSet.Add(id))
+                {
+                    var kind = id.StartsWith("svc:", StringComparison.Ordinal) ? "service"
+                        : id.StartsWith("net:", StringComparison.Ordinal) ? "network"
+                        : id.StartsWith("vol:", StringComparison.Ordinal) ? "volume"
+                        : "other";
+                    var label = id.Contains(':') ? id[(id.IndexOf(':') + 1)..] : id;
+                    nodes.Add(new ComposeGraphNode
+                    {
+                        Id = id,
+                        Label = label,
+                        Kind = kind,
+                        Subtitle = "referenced"
+                    });
+                }
+            }
+        }
+
+        return new ComposeGraphDto { Nodes = nodes, Edges = edges };
+    }
+
+    /// <summary>Named volume key from short syntax <c>volname:/path</c>; bind mounts return null.</summary>
+    private static string? NamedVolumeSource(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        var idx = raw.IndexOf(':');
+        if (idx <= 0)
+            return null;
+        var src = raw[..idx].Trim();
+        var dst = raw[(idx + 1)..].Trim();
+        if (dst.Length == 0 || src.StartsWith('/') || src.StartsWith('.'))
+            return null;
+        return src;
+    }
+
     private Dictionary<string, List<DeclarativeCheck>> BuildStartupChecksMap()
     {
         var d = new Dictionary<string, List<DeclarativeCheck>>(StringComparer.OrdinalIgnoreCase);
@@ -206,7 +360,10 @@ public sealed class ComposeBuilder : IComposeBuilder
         var d = new Dictionary<string, List<CodeTestEntry>>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in _services.Values)
         {
-            var list = s.CodeTests.Where(c => c.OnStartup).ToList();
+            var list = s.CodeTests.Where(c => c.OnStartup)
+                .OrderBy(c => c.Order)
+                .ThenBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             if (list.Count > 0)
                 d[s.Name] = list;
         }
@@ -268,6 +425,9 @@ public sealed class ComposeBuilder : IComposeBuilder
 
         foreach (var ext in def.ExtensionFields)
             root[ext.Key] = ext.Value;
+
+        if (_replicaPolicy is not null && _replicaPolicy.Count > 1)
+            root["x-chronos-replicas"] = JsonSerializer.SerializeToElement(_replicaPolicy, ManifestJson.Options);
 
         var serializer = new SerializerBuilder()
             .WithNamingConvention(NullNamingConvention.Instance)
@@ -827,6 +987,9 @@ public sealed class ComposeBuilder : IComposeBuilder
         if (s.Capabilities.Count > 0)
             obj["cap_add"] = s.Capabilities.ToList();
 
+        if (s.SecurityOpt.Count > 0)
+            obj["security_opt"] = s.SecurityOpt.ToList();
+
         if (!string.IsNullOrWhiteSpace(s.User))
             obj["user"] = s.User;
 
@@ -876,6 +1039,7 @@ public sealed class ComposeBuilder : IComposeBuilder
     IComposeBuilder IComposeBuilder.AddSecret(Secret secret) => AddSecret(secret);
     IComposeBuilder IComposeBuilder.AddConfig(Config config) => AddConfig(config);
     IComposeBuilder IComposeBuilder.AddExtension(string key, object value) => AddExtension(key, value);
+    IComposeBuilder IComposeBuilder.WithReplicaPolicy(ReplicaPolicy policy) => WithReplicaPolicy(policy);
     IComposeBuilder IComposeBuilder.AddDeployArtifactFromFile(string deployRelativePath, string sourceFilePath, int? unixFileMode) =>
         AddDeployArtifactFromFile(deployRelativePath, sourceFilePath, unixFileMode);
     IComposeBuilder IComposeBuilder.AddDeployArtifactFromDirectory(string deployRelativePath, string sourceDirectoryPath, int? unixFileMode) =>
@@ -884,6 +1048,7 @@ public sealed class ComposeBuilder : IComposeBuilder
     string IComposeBuilder.SerializeManifestJson() => SerializeManifestJson();
     bool IComposeBuilder.HasManifestPayload() => HasManifestPayload();
     IReadOnlyList<DeployArtifact> IComposeBuilder.GetDeployArtifacts() => GetDeployArtifacts();
+    IBuiltCompose IComposeBuilder.Build() => Build();
     string IComposeBuilder.GenerateYaml() => GenerateYaml();
     Task IComposeBuilder.SaveToFileAsync(string path, CancellationToken cancellationToken) => SaveToFileAsync(path, cancellationToken);
     Task<ValidationResult> IComposeBuilder.ValidateAsync(ComposeValidatorOptions? options, CancellationToken cancellationToken) =>
