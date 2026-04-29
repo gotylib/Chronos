@@ -3,10 +3,43 @@ using Chronos.Core;
 namespace Chronos.Core.Compose.Interfaces;
 
 /// <summary>
-/// Fluent builder for a full Docker Compose project: YAML generation, local runs, agent publish, cluster deploy, and volume operations.
+/// Fluent-сборка полного compose-проекта: YAML, локальный запуск, публикация на агента, кластер и операции с volumes.
 /// </summary>
 public interface IComposeBuilder
 {
+    /// <summary>Версия спецификации compose (поле <c>version</c> в YAML).</summary>
+    string ComposeSpecificationVersion { get; }
+
+    /// <summary>Относительное имя файла compose для локальных операций.</summary>
+    string ComposeFileRelativePath { get; }
+
+    /// <summary>Имя проекта Docker Compose (<c>-p</c>).</summary>
+    string ProjectName { get; }
+
+    /// <summary>Настройка CLI compose (<c>auto</c> или явная команда).</summary>
+    string DockerComposeExecutableConfiguration { get; }
+
+    /// <summary>Сервисы по имени.</summary>
+    IReadOnlyDictionary<string, Service> Services { get; }
+
+    /// <summary>Сети по имени.</summary>
+    IReadOnlyDictionary<string, Network> Networks { get; }
+
+    /// <summary>Именованные тома верхнего уровня.</summary>
+    IReadOnlyDictionary<string, Volume> Volumes { get; }
+
+    /// <summary>Секреты compose.</summary>
+    IReadOnlyDictionary<string, Secret> Secrets { get; }
+
+    /// <summary>Configs compose.</summary>
+    IReadOnlyDictionary<string, Config> Configs { get; }
+
+    /// <summary>Дополнительные корневые поля (<c>x-*</c> и пр.).</summary>
+    IReadOnlyDictionary<string, object> ExtensionFields { get; }
+
+    /// <summary>Копия политики репликации для чтения без привязки к внутреннему экземпляру билдера.</summary>
+    ReplicaPolicy? ReplicaPolicySnapshot { get; }
+
     IComposeBuilder WithVersion(string version);
     IComposeBuilder WithComposeFilePath(string composeFilePath);
     IComposeBuilder WithProjectName(string projectName);

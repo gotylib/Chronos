@@ -5,8 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace Chronos.Master.Infrastructure.Proxy;
 
 /// <summary>
-/// Writes YAML fragments consumed by Traefik &lt;code&gt;providers.file&lt;/code&gt;.
-/// Mount the same directory Traefik watches (e.g. shared Docker volume).
+/// Запись YAML-фрагментов для Traefik <c>providers.file</c>; каталог должен быть смонтирован в контейнер Traefik.
 /// </summary>
 public sealed class TraefikFileReverseProxyConfigurator : IReverseProxyConfigurator
 {

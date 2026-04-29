@@ -7,8 +7,12 @@ using Chronos.Core.Compose.Interfaces;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
+// Реализация Fluent compose: словари сервисов/сетей/volumes → YAML, LocalTester, HttpDeployAgent и кластер.
 namespace Chronos.Core.Compose.Implementation;
 
+/// <summary>
+/// Fluent API для сборки docker-compose: YAML, валидация, локальный запуск и публикация на Chronos.Agent / кластер.
+/// </summary>
 public sealed class ComposeBuilder : IComposeBuilder
 {
     private string _version = "3.8";
@@ -63,6 +67,58 @@ public sealed class ComposeBuilder : IComposeBuilder
             foreach (var v in other._replicaPolicy.SharedNamedVolumes)
                 _replicaPolicy.SharedNamedVolumes.Add(v);
         }
+    }
+
+    /// <summary>Версия спецификации compose (поле <c>version</c> в YAML).</summary>
+    public string ComposeSpecificationVersion => _version;
+
+    /// <summary>Относительное имя файла compose для локальных операций.</summary>
+    public string ComposeFileRelativePath => _composeFilePath;
+
+    /// <summary>Имя проекта Docker Compose (<c>-p</c>).</summary>
+    public string ProjectName => _projectName;
+
+    /// <summary>
+    /// Настроенное значение CLI compose (<c>auto</c> или явная команда); для резолва на машине см. <see cref="DockerComposeExecutableResolver"/>.
+    /// </summary>
+    public string DockerComposeExecutableConfiguration => _dockerComposeExecutable;
+
+    /// <summary>Сервисы по имени; сам словарь не заменить снаружи, изменение значений влияет на модель.</summary>
+    public IReadOnlyDictionary<string, Service> Services => _services;
+
+    /// <summary>Сети по имени.</summary>
+    public IReadOnlyDictionary<string, Network> Networks => _networks;
+
+    /// <summary>Именованные тома верхнего уровня.</summary>
+    public IReadOnlyDictionary<string, Volume> Volumes => _volumes;
+
+    /// <summary>Секреты compose.</summary>
+    public IReadOnlyDictionary<string, Secret> Secrets => _secrets;
+
+    /// <summary>Configs compose.</summary>
+    public IReadOnlyDictionary<string, Config> Configs => _configs;
+
+    /// <summary>Дополнительные корневые поля (<c>x-*</c> и пр.).</summary>
+    public IReadOnlyDictionary<string, object> ExtensionFields => _xFields;
+
+    /// <summary>
+    /// Независимая копия политики репликации; изменения возвращённого объекта не меняют билдер.
+    /// </summary>
+    public ReplicaPolicy? ReplicaPolicySnapshot => CloneReplicaPolicy(_replicaPolicy);
+
+    private static ReplicaPolicy? CloneReplicaPolicy(ReplicaPolicy? source)
+    {
+        if (source is null)
+            return null;
+
+        var r = new ReplicaPolicy
+        {
+            Count = source.Count,
+            PortOffsetPerReplica = source.PortOffsetPerReplica
+        };
+        foreach (var v in source.SharedNamedVolumes)
+            r.SharedNamedVolumes.Add(v);
+        return r;
     }
 
     /// <summary>Declare replica intent for Chronos Master (YAML extension <c>x-chronos-replicas</c>).</summary>
@@ -227,7 +283,7 @@ public sealed class ComposeBuilder : IComposeBuilder
     /// <inheritdoc cref="IComposeBuilder.Build"/>
     public BuiltCompose Build() => new(new ComposeBuilder(this));
 
-    /// <summary>Dependency / network graph for UI visualization.</summary>
+    /// <summary>Граф зависимостей и связей сервис↔сеть↔volume для UI.</summary>
     public ComposeGraphDto DescribeGraph()
     {
         var nodes = new List<ComposeGraphNode>();
@@ -385,6 +441,8 @@ public sealed class ComposeBuilder : IComposeBuilder
         };
     }
 
+    // --- Генерация docker-compose.yml через YamlDotNet ---
+
     public string GenerateYaml()
     {
         var def = BuildDefinition();
@@ -454,6 +512,8 @@ public sealed class ComposeBuilder : IComposeBuilder
         var definition = BuildDefinition();
         return ComposeValidator.ValidateAsync(definition, options, cancellationToken);
     }
+
+    // --- Локальный compose up/down и прогон тестов (LocalTester) ---
 
     public async Task<TestResult> StartAsync(
         string composeFilePath,
@@ -539,7 +599,7 @@ public sealed class ComposeBuilder : IComposeBuilder
     public Task<TestResult> TestAsync(TestOptions? options = null, CancellationToken cancellationToken = default)
         => TestAsync(_composeFilePath, _projectName, ResolvedDockerComposeExecutable(), options, cancellationToken);
 
-    // ---------------- Remote API ----------------
+    // ---------- Публикация на агента, вызовы Master (/cluster), манифест и артефакты ----------
 
     public async Task<DeployResult> PublishAsync(string agentUrl, string? apiKey = null, CancellationToken cancellationToken = default)
     {
@@ -679,7 +739,9 @@ public sealed class ComposeBuilder : IComposeBuilder
         }
     }
 
-    /// <summary>Stream volume snapshot from agent to a local file (docker stdout → tar, low RAM use).</summary>
+    // --- Операции с томами на агенте (снимок, заливка, восстановление) ---
+
+    /// <summary>Потоковый снимок тома с агента в локальный файл (stdout docker → tar).</summary>
     public Task SnapshotRemoteVolumeToFileAsync(
         string agentUrl,
         string dockerVolumeName,
@@ -821,6 +883,8 @@ public sealed class ComposeBuilder : IComposeBuilder
         return await agent.StopProjectAsync(_projectName, removeVolumes, cancellationToken);
     }
 
+    // --- Обратная сторона: список проектов на агенте, импорт YAML, генерация Fluent-кода ---
+
     public static Task<IReadOnlyList<string>> ListRemoteProjectsAsync(string agentUrl, string? apiKey = null, CancellationToken cancellationToken = default)
     {
         var agent = new HttpDeployAgent(agentUrl, apiKey);
@@ -844,7 +908,7 @@ public sealed class ComposeBuilder : IComposeBuilder
         return builder;
     }
 
-    // Best-effort C# fluent reconstruction.
+    // Реконструкция Fluent-кода из текущей модели (best-effort, для отладки и round-trip).
     public string ToFluentApiCode(string variableName = "compose")
     {
         var sb = new StringBuilder();

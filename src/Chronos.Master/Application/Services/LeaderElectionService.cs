@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chronos.Master.Application.Services;
 
+/// <summary>Одна строка leader_leases: продление lease текущим InstanceId или уступка другому процессу.</summary>
 public sealed class LeaderElectionService : ILeaderElectionService
 {
     private readonly IDbContextFactory<ChronosMasterDbContext> _dbFactory;

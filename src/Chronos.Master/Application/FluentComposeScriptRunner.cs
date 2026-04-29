@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.Scripting;
 
 namespace Chronos.Master.Application;
 
-/// <summary>Runs user Chronos Fluent API snippets (Roslyn). Opt-in via configuration / Development.</summary>
+/// <summary>Выполнение пользовательского C# с Fluent ComposeBuilder через Roslyn Scripting (песочница UI).</summary>
 public static class FluentComposeScriptRunner
 {
     private const int DefaultTimeoutSeconds = 45;

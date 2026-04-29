@@ -1,6 +1,6 @@
 namespace Chronos.Agent.Domain.Entities;
 
-/// <summary>Recorded volume archive on this agent (metadata in PostgreSQL; files on disk).</summary>
+/// <summary>Запись об архиве тома: метаданные в PostgreSQL, файл по StoredRelativePath на диске агента.</summary>
 public sealed class VolumeArchiveEntity
 {
     public Guid Id { get; set; }

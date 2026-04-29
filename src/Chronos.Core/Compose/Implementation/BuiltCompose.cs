@@ -1,6 +1,7 @@
 using Chronos.Core;
 using Chronos.Core.Compose.Interfaces;
 
+// Обёртка над ComposeBuilder: неизменяемый снимок для валидации и запуска без дальнейшей правки Fluent-цепочки.
 namespace Chronos.Core.Compose.Implementation;
 
 /// <inheritdoc cref="IBuiltCompose"/>
@@ -12,6 +13,28 @@ public sealed class BuiltCompose : IBuiltCompose
     {
         _inner = inner;
     }
+
+    public string ComposeSpecificationVersion => _inner.ComposeSpecificationVersion;
+
+    public string ComposeFileRelativePath => _inner.ComposeFileRelativePath;
+
+    public string ProjectName => _inner.ProjectName;
+
+    public string DockerComposeExecutableConfiguration => _inner.DockerComposeExecutableConfiguration;
+
+    public IReadOnlyDictionary<string, Service> Services => _inner.Services;
+
+    public IReadOnlyDictionary<string, Network> Networks => _inner.Networks;
+
+    public IReadOnlyDictionary<string, Volume> Volumes => _inner.Volumes;
+
+    public IReadOnlyDictionary<string, Secret> Secrets => _inner.Secrets;
+
+    public IReadOnlyDictionary<string, Config> Configs => _inner.Configs;
+
+    public IReadOnlyDictionary<string, object> ExtensionFields => _inner.ExtensionFields;
+
+    public ReplicaPolicy? ReplicaPolicySnapshot => _inner.ReplicaPolicySnapshot;
 
     public Task<ValidationResult> ValidateAsync(ComposeValidatorOptions? options = null, CancellationToken cancellationToken = default) =>
         _inner.ValidateAsync(options, cancellationToken);

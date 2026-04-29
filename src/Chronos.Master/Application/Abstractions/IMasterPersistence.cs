@@ -2,7 +2,7 @@ using Chronos.Master;
 
 namespace Chronos.Master.Application.Abstractions;
 
-/// <summary>Agent registry, audit, placement, and volume placement persistence.</summary>
+/// <summary>Слой данных Master: агенты, аудит, привязка проектов к агентам, тома.</summary>
 public interface IMasterPersistence
 {
     Task UpsertAgentAsync(AgentRegistrationRequest request, CancellationToken ct);

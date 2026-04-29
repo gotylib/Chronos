@@ -1,6 +1,6 @@
 namespace Chronos.Master.Application.Abstractions;
 
-/// <summary>PostgreSQL-backed lease so only one master replica runs exclusive background work.</summary>
+/// <summary>Блокировка-лизинг в PostgreSQL: только один экземпляр Master выполняет фоновые задачи лидера.</summary>
 public interface ILeaderElectionService
 {
     string InstanceId { get; }

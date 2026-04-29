@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chronos.Master.Infrastructure.Persistence;
 
+/// <summary>PostgreSQL: агенты, аудит, размещение проектов/томов, лидерство.</summary>
 public sealed class ChronosMasterDbContext : DbContext
 {
     public ChronosMasterDbContext(DbContextOptions<ChronosMasterDbContext> options)

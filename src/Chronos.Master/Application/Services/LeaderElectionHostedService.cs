@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace Chronos.Master.Application.Services;
 
+/// <summary>Фоновое продление лидерства каждые 10 с через <see cref="ILeaderElectionService.RenewLeaseAsync"/>.</summary>
 public sealed class LeaderElectionHostedService : BackgroundService
 {
     private readonly ILeaderElectionService _leader;

@@ -4,11 +4,16 @@ using Chronos.Master.Application.Cluster;
 
 namespace Chronos.Master.Api;
 
+/// <summary>
+/// Основной REST Master: реестр агентов и аудит; кластерный деплой с выбором агента и прокси к нему.
+/// </summary>
 public static class MasterApiExtensions
 {
     public static WebApplication MapChronosMasterEndpoints(this WebApplication app)
     {
         var expectedApiKey = app.Configuration["CHRONOS_MASTER_API_KEY"];
+
+        // --- Регистрация агентов, heartbeat, список агентов, журнал аудита ---
 
         app.MapPost("/agents/register", async (
             AgentRegistrationRequest body,
@@ -83,6 +88,8 @@ public static class MasterApiExtensions
             await AuditAsync(store, request, "audit.list", "success", $"count={records.Count}", ct).ConfigureAwait(false);
             return Results.Json(records);
         });
+
+        // --- Деплой и публикация на выбранного агента; затем маршруты /cluster/projects/* (прокси) ---
 
         app.MapPost("/cluster/deploy", async (
             ClusterDeployRequest body,

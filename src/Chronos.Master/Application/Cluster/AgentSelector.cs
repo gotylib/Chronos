@@ -2,6 +2,7 @@ using Chronos.Master;
 
 namespace Chronos.Master.Application.Cluster;
 
+/// <summary>Выбор агента для деплоя: фильтр по Location и эвристика по загрузке CPU/RAM/Disk.</summary>
 public static class AgentSelector
 {
     public static AgentInfo? SelectBestAgent(IReadOnlyList<AgentInfo> agents, string? preferredLocation)

@@ -3,6 +3,7 @@ using Chronos.Core.Compose.Implementation;
 
 namespace Chronos.Master.Api;
 
+/// <summary>Валидация compose YAML в <c>/api/v1/sandbox/validate-compose</c>; превью Fluent-кода см. UiV1 (<c>fluent-preview</c>).</summary>
 public static class SandboxV1Extensions
 {
     public static WebApplication MapChronosSandboxV1(this WebApplication app)
@@ -34,6 +35,7 @@ public static class SandboxV1Extensions
     }
 }
 
+/// <summary>Тело POST validate-compose: сырое содержимое docker-compose.</summary>
 public sealed class ValidateComposeSandboxRequest
 {
     public string ComposeYaml { get; set; } = string.Empty;

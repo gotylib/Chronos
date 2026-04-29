@@ -1,5 +1,6 @@
 using Chronos.Core.Compose.Interfaces;
 
+// Fluent-настройка одного сервиса; наполняет модель Service для ComposeBuilder.
 namespace Chronos.Core.Compose.Implementation;
 
 public sealed class ServiceBuilder : IServiceBuilder

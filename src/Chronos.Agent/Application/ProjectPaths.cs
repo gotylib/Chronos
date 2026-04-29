@@ -1,5 +1,6 @@
 namespace Chronos.Agent.Application;
 
+/// <summary>Пути каталогов проектов под <see cref="AgentPaths.AppPath"/> с проверкой безопасного имени.</summary>
 public static class ProjectPaths
 {
     public static string GetProjectDirectory(string baseDir, string projectName) =>

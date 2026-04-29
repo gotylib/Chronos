@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chronos.Master.Application.Services;
 
+/// <summary>Реализация <see cref="IMasterPersistence"/> через EF Core и <see cref="ChronosMasterDbContext"/>.</summary>
 public sealed class MasterPersistenceService : IMasterPersistence
 {
     private readonly ChronosMasterDbContext _db;

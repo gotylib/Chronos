@@ -8,6 +8,10 @@ using Chronos.Core;
 
 namespace Chronos.Agent.Api;
 
+/// <summary>
+/// Дополнительные маршруты Chronos: манифест, артефакты (tar), diagnostics, снимки/восстановление томов;
+/// запуск проверок из манифеста при старте см. <see cref="RunStartupFromManifestAsync"/>.
+/// </summary>
 public static class AgentRoutes
 {
     public static void MapAgentRoutes(

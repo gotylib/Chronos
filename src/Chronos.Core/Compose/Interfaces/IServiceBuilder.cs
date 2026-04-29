@@ -1,6 +1,6 @@
 namespace Chronos.Core.Compose.Interfaces;
 
-/// <summary>Fluent builder for a single Docker Compose service.</summary>
+/// <summary>Fluent-конфигурация одного сервиса в compose.</summary>
 public interface IServiceBuilder
 {
     IServiceBuilder WithName(string name);

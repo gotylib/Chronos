@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Chronos.Master.Application.Services;
 
-/// <summary>Leader-only: periodically touches registered agents to support future cross-agent volume replication orchestration.</summary>
+/// <summary>Только у лидера: периодический опрос агентов для будущей оркестрации репликации томов.</summary>
 public sealed class VolumeReplicationHostedService : BackgroundService
 {
     private readonly ILeaderElectionService _leader;

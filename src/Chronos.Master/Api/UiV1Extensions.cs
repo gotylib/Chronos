@@ -5,6 +5,7 @@ using Chronos.Master.Application.Abstractions;
 
 namespace Chronos.Master.Api;
 
+/// <summary>API для React UI под <c>/api/v1</c>: граф compose, статус проекта, Traefik, прокси диагностик.</summary>
 public static class UiV1Extensions
 {
     public static WebApplication MapChronosUiV1(this WebApplication app)

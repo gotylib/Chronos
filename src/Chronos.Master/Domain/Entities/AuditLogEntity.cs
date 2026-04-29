@@ -1,5 +1,6 @@
 namespace Chronos.Master.Domain.Entities;
 
+/// <summary>Журнал действий API Master (аудит).</summary>
 public sealed class AuditLogEntity
 {
     public long Id { get; set; }

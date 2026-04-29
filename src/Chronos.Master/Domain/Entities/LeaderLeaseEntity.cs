@@ -1,6 +1,6 @@
 namespace Chronos.Master.Domain.Entities;
 
-/// <summary>Single-row lease for HA master background jobs (volume replication, backups).</summary>
+/// <summary>Одна строка лиза для HA: какой экземпляр Master — лидер фоновых задач.</summary>
 public sealed class LeaderLeaseEntity
 {
     /// <summary>Always 1 — singleton row.</summary>

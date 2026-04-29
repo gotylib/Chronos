@@ -1,8 +1,10 @@
+using Chronos.Agent.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
 namespace Chronos.Agent.Infrastructure.Persistence;
 
+/// <summary>Фабрика для dotnet ef migrations (переменная CHRONOS_AGENT_PG_CONNECTION или дефолт localhost).</summary>
 public sealed class ChronosAgentDbContextFactory : IDesignTimeDbContextFactory<ChronosAgentDbContext>
 {
     public ChronosAgentDbContext CreateDbContext(string[] args)

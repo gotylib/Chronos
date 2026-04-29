@@ -1,7 +1,7 @@
 namespace Chronos.Core.Compose;
 
 /// <summary>
-/// Immutable snapshot of a compose document (services, networks, volumes, etc.).
+/// Неизменяемый снимок документа compose для валидации и сериализации без привязки к Fluent-билдеру.
 /// </summary>
 public sealed class ComposeDefinition
 {

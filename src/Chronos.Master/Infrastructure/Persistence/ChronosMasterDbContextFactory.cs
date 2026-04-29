@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Design;
 
 namespace Chronos.Master.Infrastructure.Persistence;
 
-/// <summary>Design-time factory for EF Core CLI migrations.</summary>
+/// <summary>Фабрика для <c>dotnet ef</c>; строка из CHRONOS_MASTER_PG_CONNECTION или localhost.</summary>
 public sealed class ChronosMasterDbContextFactory : IDesignTimeDbContextFactory<ChronosMasterDbContext>
 {
     public ChronosMasterDbContext CreateDbContext(string[] args)

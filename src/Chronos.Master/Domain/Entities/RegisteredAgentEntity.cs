@@ -1,6 +1,6 @@
 namespace Chronos.Master.Domain.Entities;
 
-/// <summary>Heartbeat-registered Chronos.Agent instance.</summary>
+/// <summary>Зарегистрированный экземпляр Chronos.Agent и последние метрики heartbeat.</summary>
 public sealed class RegisteredAgentEntity
 {
     public string AgentId { get; set; } = string.Empty;

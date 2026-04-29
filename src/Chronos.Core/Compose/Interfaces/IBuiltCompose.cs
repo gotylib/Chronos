@@ -3,10 +3,43 @@ using Chronos.Core;
 namespace Chronos.Core.Compose.Interfaces;
 
 /// <summary>
-/// Immutable snapshot from <see cref="IComposeBuilder.Build"/> used for validation, local runs, and deploy operations.
+/// Неизменяемый снимок после <see cref="IComposeBuilder.Build"/> — валидация, локальный запуск и деплой.
 /// </summary>
 public interface IBuiltCompose
 {
+    /// <inheritdoc cref="IComposeBuilder.ComposeSpecificationVersion"/>
+    string ComposeSpecificationVersion { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.ComposeFileRelativePath"/>
+    string ComposeFileRelativePath { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.ProjectName"/>
+    string ProjectName { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.DockerComposeExecutableConfiguration"/>
+    string DockerComposeExecutableConfiguration { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.Services"/>
+    IReadOnlyDictionary<string, Service> Services { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.Networks"/>
+    IReadOnlyDictionary<string, Network> Networks { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.Volumes"/>
+    IReadOnlyDictionary<string, Volume> Volumes { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.Secrets"/>
+    IReadOnlyDictionary<string, Secret> Secrets { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.Configs"/>
+    IReadOnlyDictionary<string, Config> Configs { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.ExtensionFields"/>
+    IReadOnlyDictionary<string, object> ExtensionFields { get; }
+
+    /// <inheritdoc cref="IComposeBuilder.ReplicaPolicySnapshot"/>
+    ReplicaPolicy? ReplicaPolicySnapshot { get; }
+
     Task<ValidationResult> ValidateAsync(ComposeValidatorOptions? options = null, CancellationToken cancellationToken = default);
 
     string GenerateYaml();

@@ -1,3 +1,5 @@
+// Chronos.Master — центральный API: PostgreSQL, координация агентов, Traefik,
+// REST для UI и прокси к агентам; статика SPA в wwwroot/ui (fallback /ui).
 using Chronos.Master.Api;
 using Chronos.Master.Application.Abstractions;
 using Chronos.Master.Application.Services;
@@ -7,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// PostgreSQL + EF: фабрика для фоновых сервисов и scoped DbContext для запросов HTTP.
 var connectionString = ResolveConnectionString(builder.Configuration);
 builder.Services.AddDbContextFactory<ChronosMasterDbContext>(opts =>
     opts.UseNpgsql(connectionString));
@@ -14,6 +17,7 @@ builder.Services.AddScoped<ChronosMasterDbContext>(sp =>
     sp.GetRequiredService<IDbContextFactory<ChronosMasterDbContext>>().CreateDbContext());
 
 builder.Services.AddScoped<IMasterPersistence, MasterPersistenceService>();
+// Лидерство и фоновые задачи только у одной реплики Master; Traefik — запись YAML при заданном каталоге.
 builder.Services.AddSingleton<ILeaderElectionService, LeaderElectionService>();
 builder.Services.AddHostedService<LeaderElectionHostedService>();
 builder.Services.AddHostedService<VolumeReplicationHostedService>();
@@ -53,6 +57,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v1/swagger.json", "Chronos Master v1"));
 }
 
+// REST: кластер и агенты — MasterApiExtensions; UI и sandbox — отдельные extension-методы.
 app.MapChronosMasterEndpoints();
 app.MapChronosSandboxV1();
 app.MapChronosUiV1();

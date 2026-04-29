@@ -1,5 +1,6 @@
 namespace Chronos.Master.Domain.Entities;
 
+/// <summary>Учёт размещения тома по агентам (роль primary/replica).</summary>
 public sealed class VolumePlacementEntity
 {
     public string ProjectName { get; set; } = string.Empty;
