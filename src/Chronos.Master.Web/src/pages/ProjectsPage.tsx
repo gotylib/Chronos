@@ -31,9 +31,29 @@ export function ProjectsPage() {
     setBusy(`${kind}:${projectName}`);
     setError(null);
     try {
-      if (kind === "start") await projectStart(projectName);
+      if (kind === "start") {
+        const r = await projectStart(projectName);
+        if (!r.ok)
+          throw new Error(
+            r.status === 409
+              ? "Нужно подтвердить изменение compose — откройте карточку проекта и сохраните YAML или запустите оттуда."
+              : typeof r.body === "string"
+                ? r.body
+                : JSON.stringify(r.body)
+          );
+      }
       if (kind === "stop") await projectStop(projectName, false);
-      if (kind === "restart") await projectRestart(projectName, false);
+      if (kind === "restart") {
+        const r = await projectRestart(projectName, false);
+        if (!r.ok)
+          throw new Error(
+            r.status === 409
+              ? "Нужно подтвердить изменение compose — откройте карточку проекта."
+              : typeof r.body === "string"
+                ? r.body
+                : JSON.stringify(r.body)
+          );
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -53,6 +73,11 @@ export function ProjectsPage() {
         <h1 className="text-2xl font-semibold text-white">Projects</h1>
         <p className="mt-1 text-sm text-slate-400">
           Размещение проектов на агенте. Откройте карточку для статуса контейнеров, declarative/code тестов и задач из манифеста.
+        </p>
+        <p className="mt-2">
+          <Link className="text-xs font-medium text-emerald-400/90 hover:text-emerald-300" to="archived">
+            Archived projects →
+          </Link>
         </p>
       </div>
 

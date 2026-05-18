@@ -2,10 +2,12 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Chronos.Agent.Application;
+using Chronos.Agent.Infrastructure.Compose;
 using Chronos.Agent.Domain;
 using Chronos.Agent.Domain.Entities;
 using Chronos.Agent.Infrastructure.Persistence;
 using Chronos.Core;
+using Chronos.Core.Application.Compose;
 using Chronos.Core.Compose.Implementation;
 using Chronos.Core.Safety;
 using Microsoft.EntityFrameworkCore;
@@ -34,6 +36,9 @@ public static class AgentMainRoutes
             await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
+                var composePath = Path.Combine(workingDirectory, composeFileName);
+                await ComposeHostPortRewriter.TryRewriteAsync(composePath, app.Configuration, ct).ConfigureAwait(false);
+
                 var up = await RunProcessAsync(dockerComposeExecutable,
                     $"-f \"{composeFileName}\" up -d",
                     workingDirectory: workingDirectory,
@@ -82,6 +87,9 @@ public static class AgentMainRoutes
                     return;
                 }
 
+                var composePathGr = Path.Combine(workingDirectory, composeFileName);
+                await ComposeHostPortRewriter.TryRewriteAsync(composePathGr, app.Configuration, ct).ConfigureAwait(false);
+
                 var up = await RunProcessAsync(dockerComposeExecutable,
                     $"-f \"{composeFileName}\" up -d",
                     workingDirectory: workingDirectory,
@@ -119,6 +127,9 @@ public static class AgentMainRoutes
             await deploymentLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
+                var composePathProj = Path.Combine(projectDir, composeFileName);
+                await ComposeHostPortRewriter.TryRewriteAsync(composePathProj, app.Configuration, ct).ConfigureAwait(false);
+
                 var up = await RunProcessAsync(dockerComposeExecutable,
                     $"-f \"{composeFileName}\" up -d",
                     workingDirectory: projectDir,
@@ -170,6 +181,9 @@ public static class AgentMainRoutes
                     return;
                 }
 
+                var composePathRestart = Path.Combine(projectDir, composeFileName);
+                await ComposeHostPortRewriter.TryRewriteAsync(composePathRestart, app.Configuration, ct).ConfigureAwait(false);
+
                 var up = await RunProcessAsync(dockerComposeExecutable,
                     $"-f \"{composeFileName}\" up -d",
                     workingDirectory: projectDir,
@@ -211,29 +225,38 @@ public static class AgentMainRoutes
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await deploymentLock.WaitAsync(ct);
+            var form = await request.ReadFormAsync(ct);
+            var composeYaml = form["compose"].ToString();
+
+            if (string.IsNullOrWhiteSpace(composeYaml))
+                return Results.BadRequest("Missing form field 'compose'.");
+
+            ComposeBuilder parsed;
             try
             {
-                var form = await request.ReadFormAsync(ct);
-                var composeYaml = form["compose"].ToString();
-                
-                if (string.IsNullOrWhiteSpace(composeYaml))
-                    return Results.BadRequest("Missing form field 'compose'.");
+                parsed = ComposeYamlParser.Parse(composeYaml);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+            }
 
-                var composeBuilder = ComposeYamlParser.Parse(composeYaml);
+            var composePath = Path.Combine(appPath, composeFileName);
+            var previousYaml = File.Exists(composePath)
+                ? await File.ReadAllTextAsync(composePath, ct).ConfigureAwait(false)
+                : null;
 
-                var serviceEntity = new ServiceEntity
-                {
-                    ServiceName = composeBuilder.ProjectName,
-                    DockerComposeFile = composeFileName,
-                    DockerComposeFilePath = Path.Combine(appPath, composeFileName),
-                    ImageNames = composeBuilder.Services.Select(s => s.Value.Image).ToList(),
-                    VolumeNames = composeBuilder.Volumes.Select(v => v.Value.Name).ToList(),
-                };
+            var conflict = TryRedeployConflictResult(previousYaml, parsed, FormConfirm(form));
+            if (conflict != null)
+                return conflict;
 
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
                 Directory.CreateDirectory(appPath);
-                var composePath = Path.Combine(appPath, composeFileName);
-                await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+                await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+                await UpsertDeploymentSnapshotAsync(db, DeploymentSnapshotKeys.GlobalCompose, composeFileName, composePath, parsed,
+                    ct).ConfigureAwait(false);
             }
             finally
             {
@@ -253,21 +276,47 @@ public static class AgentMainRoutes
             });
         });
 
-        app.MapPost("/start", async (HttpRequest request, CancellationToken ct) =>
+        app.MapPost("/start", async (HttpRequest request, ChronosAgentDbContext db, CancellationToken ct) =>
         {
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await deploymentLock.WaitAsync(ct);
+            var form = await request.ReadFormAsync(ct);
+            var composeYaml = form["compose"].ToString();
+            var confirm = FormConfirm(form);
+
+            ComposeBuilder? parsedForSnapshot = null;
+            if (!string.IsNullOrWhiteSpace(composeYaml))
+            {
+                try
+                {
+                    parsedForSnapshot = ComposeYamlParser.Parse(composeYaml);
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+                }
+
+                var composePathPre = Path.Combine(appPath, composeFileName);
+                var previousYaml = File.Exists(composePathPre)
+                    ? await File.ReadAllTextAsync(composePathPre, ct).ConfigureAwait(false)
+                    : null;
+
+                var conflict = TryRedeployConflictResult(previousYaml, parsedForSnapshot, confirm);
+                if (conflict != null)
+                    return conflict;
+            }
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var form = await request.ReadFormAsync(ct);
-                var composeYaml = form["compose"].ToString();
-                if (!string.IsNullOrWhiteSpace(composeYaml))
+                if (!string.IsNullOrWhiteSpace(composeYaml) && parsedForSnapshot != null)
                 {
                     Directory.CreateDirectory(appPath);
                     var composePath = Path.Combine(appPath, composeFileName);
-                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+                    await UpsertDeploymentSnapshotAsync(db, DeploymentSnapshotKeys.GlobalCompose, composeFileName, composePath,
+                        parsedForSnapshot, ct).ConfigureAwait(false);
                 }
 
                 if (!Directory.Exists(appPath) || !File.Exists(Path.Combine(appPath, composeFileName)))
@@ -329,21 +378,47 @@ public static class AgentMainRoutes
             }
         });
 
-        app.MapPost("/restart", async (HttpRequest request, CancellationToken ct, bool removeVolumes = false) =>
+        app.MapPost("/restart", async (HttpRequest request, ChronosAgentDbContext db, CancellationToken ct, bool removeVolumes = false) =>
         {
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await deploymentLock.WaitAsync(ct);
+            var form = await request.ReadFormAsync(ct);
+            var composeYaml = form["compose"].ToString();
+            var confirm = FormConfirm(form);
+
+            ComposeBuilder? parsedForSnapshot = null;
+            if (!string.IsNullOrWhiteSpace(composeYaml))
+            {
+                try
+                {
+                    parsedForSnapshot = ComposeYamlParser.Parse(composeYaml);
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+                }
+
+                var composePathPre = Path.Combine(appPath, composeFileName);
+                var previousYaml = File.Exists(composePathPre)
+                    ? await File.ReadAllTextAsync(composePathPre, ct).ConfigureAwait(false)
+                    : null;
+
+                var conflict = TryRedeployConflictResult(previousYaml, parsedForSnapshot, confirm);
+                if (conflict != null)
+                    return conflict;
+            }
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var form = await request.ReadFormAsync(ct);
-                var composeYaml = form["compose"].ToString();
-                if (!string.IsNullOrWhiteSpace(composeYaml))
+                if (!string.IsNullOrWhiteSpace(composeYaml) && parsedForSnapshot != null)
                 {
                     Directory.CreateDirectory(appPath);
                     var composePath = Path.Combine(appPath, composeFileName);
-                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+                    await UpsertDeploymentSnapshotAsync(db, DeploymentSnapshotKeys.GlobalCompose, composeFileName, composePath,
+                        parsedForSnapshot, ct).ConfigureAwait(false);
                 }
 
                 if (!Directory.Exists(appPath) || !File.Exists(Path.Combine(appPath, composeFileName)))
@@ -408,6 +483,173 @@ public static class AgentMainRoutes
             return Results.Json(projects);
         });
 
+        var archiveManifestSerializerOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            WriteIndented = true
+        };
+
+        app.MapGet("/projects/archived", (HttpRequest request) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            var root = ArchivedProjectsPaths.GetArchiveRoot(appPath);
+            if (!Directory.Exists(root))
+                return Results.Json(new List<ProjectArchiveManifest>());
+
+            var list = new List<ProjectArchiveManifest>();
+            foreach (var dir in Directory.GetDirectories(root))
+            {
+                var mp = ArchivedProjectsPaths.ManifestPath(dir);
+                if (!File.Exists(mp))
+                    continue;
+                try
+                {
+                    var text = File.ReadAllText(mp);
+                    var m = JsonSerializer.Deserialize<ProjectArchiveManifest>(text, archiveManifestSerializerOptions);
+                    if (m != null)
+                        list.Add(m);
+                }
+                catch
+                {
+                    // skip corrupt entry
+                }
+            }
+
+            return Results.Json(list.OrderByDescending(x => x.ArchivedUtc).ToList());
+        });
+
+        app.MapPost("/projects/archived/{archiveId}/restore", async (string archiveId, HttpRequest request, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var archiveDir = ArchivedProjectsPaths.GetArchiveDirectory(appPath, archiveId);
+                var manifestPath = ArchivedProjectsPaths.ManifestPath(archiveDir);
+                if (!File.Exists(manifestPath))
+                    return Results.NotFound();
+
+                var manifest = JsonSerializer.Deserialize<ProjectArchiveManifest>(
+                    await File.ReadAllTextAsync(manifestPath, ct).ConfigureAwait(false),
+                    archiveManifestSerializerOptions);
+                if (manifest == null || string.IsNullOrWhiteSpace(manifest.ProjectName))
+                    return Results.BadRequest("Invalid archive manifest.");
+
+                var safeName = ProjectPaths.SafeProjectName(manifest.ProjectName);
+                var archivedLeaf = Path.Combine(archiveDir, safeName);
+                if (!Directory.Exists(archivedLeaf))
+                    return Results.BadRequest("Archived project directory missing.");
+
+                var activeDir = ProjectPaths.GetProjectDirectory(appPath, safeName);
+                if (Directory.Exists(activeDir))
+                    return Results.Conflict($"Active project '{safeName}' already exists.");
+
+                Directory.Move(archivedLeaf, activeDir);
+                Directory.Delete(archiveDir, recursive: true);
+                return Results.Json(new { restored = true, projectName = safeName });
+            }
+            finally
+            {
+                deploymentLock.Release();
+            }
+        });
+
+        app.MapDelete("/projects/archived/{archiveId}", (string archiveId, HttpRequest request) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            var archiveDir = ArchivedProjectsPaths.GetArchiveDirectory(appPath, archiveId);
+            if (!Directory.Exists(archiveDir))
+                return Results.NotFound();
+
+            Directory.Delete(archiveDir, recursive: true);
+            return Results.Ok(new { purged = true });
+        });
+
+        app.MapPost("/projects/{projectName}/archive", async (string projectName, HttpRequest request, CancellationToken ct) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            string safeName;
+            try
+            {
+                safeName = ProjectPaths.SafeProjectName(projectName);
+            }
+            catch (ArgumentException)
+            {
+                return Results.BadRequest("Invalid project name.");
+            }
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var projectDir = ProjectPaths.GetProjectDirectory(appPath, safeName);
+                var composePath = Path.Combine(projectDir, composeFileName);
+                if (!File.Exists(composePath))
+                    return Results.NotFound($"Project '{safeName}' not found.");
+
+                var down = await RunProcessAsync(dockerComposeExecutable,
+                        $"-f \"{composeFileName}\" down",
+                        workingDirectory: projectDir,
+                        ct)
+                    .ConfigureAwait(false);
+                if (down.ExitCode != 0)
+                {
+                    return Results.Json(new DeployResult { Success = false, Error = down.Stderr }, statusCode: 500);
+                }
+
+                var retentionDays = Math.Clamp(app.Configuration.GetValue("CHRONOS_PROJECT_ARCHIVE_RETENTION_DAYS", 7), 1, 365);
+                var archiveRoot = ArchivedProjectsPaths.GetArchiveRoot(appPath);
+                Directory.CreateDirectory(archiveRoot);
+                var archiveId = Guid.NewGuid().ToString("N");
+                var archiveDir = ArchivedProjectsPaths.GetArchiveDirectory(appPath, archiveId);
+                Directory.CreateDirectory(archiveDir);
+                var destLeaf = Path.Combine(archiveDir, safeName);
+                Directory.Move(projectDir, destLeaf);
+
+                var archivedUtc = DateTimeOffset.UtcNow;
+                var manifest = new ProjectArchiveManifest
+                {
+                    ArchiveId = archiveId,
+                    ProjectName = safeName,
+                    ArchivedUtc = archivedUtc,
+                    PurgeAfterUtc = archivedUtc.AddDays(retentionDays),
+                    RetentionDays = retentionDays
+                };
+
+                await File.WriteAllTextAsync(
+                        ArchivedProjectsPaths.ManifestPath(archiveDir),
+                        JsonSerializer.Serialize(manifest,
+                            new JsonSerializerOptions
+                            {
+                                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                                WriteIndented = true
+                            }),
+                        ct)
+                    .ConfigureAwait(false);
+
+                return Results.Json(new
+                {
+                    archiveId,
+                    projectName = safeName,
+                    archivedUtc,
+                    purgeAfterUtc = manifest.PurgeAfterUtc,
+                    retentionDays
+                });
+            }
+            finally
+            {
+                deploymentLock.Release();
+            }
+        });
+
         app.MapGet("/projects/{projectName}/compose", async (string projectName) =>
         {
             var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
@@ -419,7 +661,8 @@ public static class AgentMainRoutes
             return Results.Text(text, contentType: "text/plain; charset=utf-8");
         });
 
-        app.MapPost("/projects/{projectName}/compose", async (string projectName, HttpRequest request, CancellationToken ct) =>
+        app.MapPost("/projects/{projectName}/compose", async (string projectName, HttpRequest request, ChronosAgentDbContext db,
+            CancellationToken ct) =>
         {
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
@@ -429,30 +672,77 @@ public static class AgentMainRoutes
             if (string.IsNullOrWhiteSpace(composeYaml))
                 return Results.BadRequest("Missing form field 'compose'.");
 
+            ComposeBuilder parsed;
+            try
+            {
+                parsed = ComposeYamlParser.Parse(composeYaml);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+            }
+
             var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
             Directory.CreateDirectory(projectDir);
             var composePath = Path.Combine(projectDir, composeFileName);
 
-            await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+            var previousYaml = File.Exists(composePath)
+                ? await File.ReadAllTextAsync(composePath, ct).ConfigureAwait(false)
+                : null;
+
+            var conflict = TryRedeployConflictResult(previousYaml, parsed, FormConfirm(form));
+            if (conflict != null)
+                return conflict;
+
+            await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+            await UpsertDeploymentSnapshotAsync(db, projectName, composeFileName, composePath, parsed, ct).ConfigureAwait(false);
             return Results.Ok();
         });
 
-        app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequest request, CancellationToken ct) =>
+        app.MapPost("/projects/{projectName}/start", async (string projectName, HttpRequest request, ChronosAgentDbContext db,
+            CancellationToken ct) =>
         {
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await deploymentLock.WaitAsync(ct);
+            var form = await request.ReadFormAsync(ct);
+            var composeYaml = form["compose"].ToString();
+            var confirm = FormConfirm(form);
+
+            ComposeBuilder? parsedForSnapshot = null;
+            if (!string.IsNullOrWhiteSpace(composeYaml))
+            {
+                try
+                {
+                    parsedForSnapshot = ComposeYamlParser.Parse(composeYaml);
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+                }
+
+                var projectDirPre = ProjectPaths.GetProjectDirectory(appPath, projectName);
+                var composePathPre = Path.Combine(projectDirPre, composeFileName);
+                var previousYaml = File.Exists(composePathPre)
+                    ? await File.ReadAllTextAsync(composePathPre, ct).ConfigureAwait(false)
+                    : null;
+
+                var conflict = TryRedeployConflictResult(previousYaml, parsedForSnapshot, confirm);
+                if (conflict != null)
+                    return conflict;
+            }
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
-                var form = await request.ReadFormAsync(ct);
-                var composeYaml = form["compose"].ToString();
-                if (!string.IsNullOrWhiteSpace(composeYaml))
+                if (!string.IsNullOrWhiteSpace(composeYaml) && parsedForSnapshot != null)
                 {
                     Directory.CreateDirectory(projectDir);
                     var composePath = Path.Combine(projectDir, composeFileName);
-                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+                    await UpsertDeploymentSnapshotAsync(db, projectName, composeFileName, composePath, parsedForSnapshot,
+                        ct).ConfigureAwait(false);
                 }
 
                 if (!Directory.Exists(projectDir) || !File.Exists(Path.Combine(projectDir, composeFileName)))
@@ -516,22 +806,50 @@ public static class AgentMainRoutes
             }
         });
 
-        app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRequest request, CancellationToken ct, bool removeVolumes = false) =>
+        app.MapPost("/projects/{projectName}/restart", async (string projectName, HttpRequest request, ChronosAgentDbContext db,
+            CancellationToken ct, bool removeVolumes = false) =>
         {
             if (!IsAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await deploymentLock.WaitAsync(ct);
+            var form = await request.ReadFormAsync(ct);
+            var composeYaml = form["compose"].ToString();
+            var confirm = FormConfirm(form);
+
+            ComposeBuilder? parsedForSnapshot = null;
+            if (!string.IsNullOrWhiteSpace(composeYaml))
+            {
+                try
+                {
+                    parsedForSnapshot = ComposeYamlParser.Parse(composeYaml);
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest($"Invalid compose YAML: {ex.Message}");
+                }
+
+                var projectDirPre = ProjectPaths.GetProjectDirectory(appPath, projectName);
+                var composePathPre = Path.Combine(projectDirPre, composeFileName);
+                var previousYaml = File.Exists(composePathPre)
+                    ? await File.ReadAllTextAsync(composePathPre, ct).ConfigureAwait(false)
+                    : null;
+
+                var conflict = TryRedeployConflictResult(previousYaml, parsedForSnapshot, confirm);
+                if (conflict != null)
+                    return conflict;
+            }
+
+            await deploymentLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 var projectDir = ProjectPaths.GetProjectDirectory(appPath, projectName);
-                var form = await request.ReadFormAsync(ct);
-                var composeYaml = form["compose"].ToString();
-                if (!string.IsNullOrWhiteSpace(composeYaml))
+                if (!string.IsNullOrWhiteSpace(composeYaml) && parsedForSnapshot != null)
                 {
                     Directory.CreateDirectory(projectDir);
                     var composePath = Path.Combine(projectDir, composeFileName);
-                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct);
+                    await File.WriteAllTextAsync(composePath, composeYaml, Encoding.UTF8, ct).ConfigureAwait(false);
+                    await UpsertDeploymentSnapshotAsync(db, projectName, composeFileName, composePath, parsedForSnapshot,
+                        ct).ConfigureAwait(false);
                 }
 
                 if (!Directory.Exists(projectDir) || !File.Exists(Path.Combine(projectDir, composeFileName)))
@@ -652,6 +970,77 @@ public static class AgentMainRoutes
         });
     }
 
+    private static bool FormConfirm(IFormCollection form)
+    {
+        var v = form["confirm"].ToString();
+        return string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
+               || v == "1"
+               || string.Equals(v, "yes", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(v, "on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IResult? TryRedeployConflictResult(string? previousYaml, ComposeBuilder newCompose, bool confirmed)
+    {
+        var assessment = ComposeRedeployRiskEvaluator.Assess(previousYaml, newCompose);
+        if (!assessment.RequiresConfirmation || confirmed)
+            return null;
+
+        return Results.Json(
+            new RedeployConflictBody(
+                Code: "redeploy_confirmation_required",
+                Message:
+                "Обновление compose удалит перечисленные сервисы или тома и/или изменит образы контейнеров. Повторите запрос с полем confirm=true.",
+                RemovedComposeServices: assessment.RemovedComposeServices,
+                RemovedNamedVolumes: assessment.RemovedNamedVolumes,
+                ImageChanges: assessment.ImageChanges),
+            statusCode: StatusCodes.Status409Conflict);
+    }
+
+    private sealed record RedeployConflictBody(
+        string Code,
+        string Message,
+        IReadOnlyList<string> RemovedComposeServices,
+        IReadOnlyList<string> RemovedNamedVolumes,
+        IReadOnlyList<ComposeServiceImageChange> ImageChanges);
+
+    private static async Task UpsertDeploymentSnapshotAsync(
+        ChronosAgentDbContext db,
+        string deploymentKey,
+        string composeFileName,
+        string composeFullPath,
+        ComposeBuilder builder,
+        CancellationToken ct)
+    {
+        var images = builder.Services
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => kv.Value.Image ?? string.Empty)
+            .ToList();
+
+        var volumes = builder.Volumes.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+        var entity = await db.Services.FirstOrDefaultAsync(s => s.ServiceName == deploymentKey, ct).ConfigureAwait(false);
+        if (entity == null)
+        {
+            db.Services.Add(new ServiceEntity
+            {
+                ServiceName = deploymentKey,
+                DockerComposeFile = composeFileName,
+                DockerComposeFilePath = composeFullPath,
+                ImageNames = images,
+                VolumeNames = volumes
+            });
+        }
+        else
+        {
+            entity.DockerComposeFile = composeFileName;
+            entity.DockerComposeFilePath = composeFullPath;
+            entity.ImageNames = images;
+            entity.VolumeNames = volumes;
+        }
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
     private static bool IsAuthorized(HttpRequest request, string? expectedApiKey)
     {
         if (string.IsNullOrWhiteSpace(expectedApiKey))
@@ -763,6 +1152,34 @@ public static class AgentMainRoutes
     private static async Task<DeployResult> AttachDiagnosticsAsync(DeployResult status, string projectDir, CancellationToken ct)
     {
         status.Diagnostics = await AgentPersistence.LoadAsync(projectDir, ct).ConfigureAwait(false);
-        return await DeploymentStateHelper.AttachAsync(status, projectDir, ct).ConfigureAwait(false);
+        status = await DeploymentStateHelper.AttachAsync(status, projectDir, ct).ConfigureAwait(false);
+        await AttachPublishedHostPortsAsync(status, projectDir, ct).ConfigureAwait(false);
+        return status;
+    }
+
+    private static readonly JsonSerializerOptions PublishedHostPortsReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static async Task AttachPublishedHostPortsAsync(DeployResult status, string projectDir, CancellationToken ct)
+    {
+        var path = Path.Combine(projectDir, ".chronos", "published-host-ports.json");
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            await using var fs = File.OpenRead(path);
+            var list = await JsonSerializer
+                .DeserializeAsync<List<PublishedHostPortBinding>>(fs, PublishedHostPortsReadOptions, ct)
+                .ConfigureAwait(false);
+            if (list is { Count: > 0 })
+                status.PublishedHostPorts = list;
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 }

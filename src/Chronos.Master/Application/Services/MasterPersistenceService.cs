@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Chronos.Master;
 using Chronos.Master.Application.Abstractions;
+using Chronos.Master.Application.Contracts;
 using Chronos.Master.Domain.Entities;
 using Chronos.Master.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -211,6 +213,179 @@ public sealed class MasterPersistenceService : IMasterPersistence
             UpdatedUtc = v.UpdatedUtc
         }).ToList();
     }
+
+    public async Task<List<VolumeBackupPolicyDto>> ListVolumeBackupPoliciesAsync(CancellationToken ct)
+    {
+        var rows = await _db.VolumeBackupPolicies.AsNoTracking()
+            .OrderBy(p => p.ProjectName)
+            .ThenBy(p => p.VolumeNamePattern)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return rows.Select(ToDto).ToList();
+    }
+
+    public async Task<Guid> CreateVolumeBackupPolicyAsync(VolumeBackupPolicyCreateRequest request, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var entity = new VolumeBackupPolicyEntity
+        {
+            Id = Guid.NewGuid(),
+            ProjectName = request.ProjectName.Trim(),
+            VolumeNamePattern = string.IsNullOrWhiteSpace(request.VolumeNamePattern)
+                ? "*"
+                : request.VolumeNamePattern.Trim(),
+            MinCopies = request.MinCopies,
+            MaxCopies = request.MaxCopies,
+            MinMinutesBetweenBackups = request.MinMinutesBetweenBackups,
+            MinutesCooldownPerGb = request.MinutesCooldownPerGb,
+            MaxCooldownMinutes = request.MaxCooldownMinutes,
+            MinimumFreeDiskMb = request.MinimumFreeDiskMb,
+            Enabled = request.Enabled,
+            ExtraKeyPrefix = string.IsNullOrWhiteSpace(request.ExtraKeyPrefix)
+                ? null
+                : request.ExtraKeyPrefix.Trim(),
+            CreatedUtc = now,
+            UpdatedUtc = now
+        };
+
+        _db.VolumeBackupPolicies.Add(entity);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return entity.Id;
+    }
+
+    public async Task<bool> DeleteVolumeBackupPolicyAsync(Guid id, CancellationToken ct)
+    {
+        var entity = await _db.VolumeBackupPolicies.FindAsync([id], ct).ConfigureAwait(false);
+        if (entity == null)
+            return false;
+
+        _db.VolumeBackupPolicies.Remove(entity);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task<VolumeBackupStateDto?> GetVolumeBackupStateAsync(string projectName, string volumeName,
+        CancellationToken ct)
+    {
+        var row = await _db.VolumeBackupStates.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.ProjectName == projectName && s.VolumeName == volumeName, ct)
+            .ConfigureAwait(false);
+        return row == null
+            ? null
+            : new VolumeBackupStateDto
+            {
+                ProjectName = row.ProjectName,
+                VolumeName = row.VolumeName,
+                LastBackupUtc = row.LastBackupUtc,
+                LastApproxBytes = row.LastApproxBytes
+            };
+    }
+
+    public async Task UpsertVolumeBackupStateAsync(string projectName, string volumeName, DateTimeOffset completedUtc,
+        long? approxBytes, CancellationToken ct)
+    {
+        var row = await _db.VolumeBackupStates.FindAsync([projectName, volumeName], ct).ConfigureAwait(false);
+        if (row == null)
+        {
+            _db.VolumeBackupStates.Add(new VolumeBackupStateEntity
+            {
+                ProjectName = projectName,
+                VolumeName = volumeName,
+                LastBackupUtc = completedUtc,
+                LastApproxBytes = approxBytes
+            });
+        }
+        else
+        {
+            row.LastBackupUtc = completedUtc;
+            row.LastApproxBytes = approxBytes;
+        }
+
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<bool> DeleteProjectPlacementAsync(string projectName, CancellationToken ct)
+    {
+        var n = await _db.ProjectPlacements.Where(p => p.ProjectName == projectName).ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        return n > 0;
+    }
+
+    public async Task DeleteVolumePlacementsForProjectAsync(string projectName, CancellationToken ct)
+    {
+        await _db.VolumePlacements.Where(v => v.ProjectName == projectName).ExecuteDeleteAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task AddArchivedProjectAsync(ArchivedProjectInfo row, CancellationToken ct)
+    {
+        _db.ArchivedProjects.Add(new ArchivedProjectEntity
+        {
+            ArchiveId = row.ArchiveId,
+            ProjectName = row.ProjectName,
+            AgentId = row.AgentId,
+            AgentUrl = row.AgentUrl,
+            ArchivedUtc = row.ArchivedUtc,
+            PurgeAfterUtc = row.PurgeAfterUtc
+        });
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<List<ArchivedProjectInfo>> ListArchivedProjectsAsync(CancellationToken ct)
+    {
+        var rows = await _db.ArchivedProjects.AsNoTracking().OrderByDescending(a => a.ArchivedUtc).ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(ToArchivedInfo).ToList();
+    }
+
+    public async Task<ArchivedProjectInfo?> GetArchivedProjectAsync(string archiveId, CancellationToken ct)
+    {
+        var row = await _db.ArchivedProjects.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.ArchiveId == archiveId, ct).ConfigureAwait(false);
+        return row == null ? null : ToArchivedInfo(row);
+    }
+
+    public async Task<bool> DeleteArchivedProjectAsync(string archiveId, CancellationToken ct)
+    {
+        var n = await _db.ArchivedProjects.Where(a => a.ArchiveId == archiveId).ExecuteDeleteAsync(ct).ConfigureAwait(false);
+        return n > 0;
+    }
+
+    public async Task<List<ArchivedProjectInfo>> ListArchivedProjectsReadyForPurgeAsync(DateTimeOffset nowUtc, CancellationToken ct)
+    {
+        var rows = await _db.ArchivedProjects.AsNoTracking()
+            .Where(a => a.PurgeAfterUtc <= nowUtc)
+            .OrderBy(a => a.PurgeAfterUtc)
+            .ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(ToArchivedInfo).ToList();
+    }
+
+    private static ArchivedProjectInfo ToArchivedInfo(ArchivedProjectEntity e) =>
+        new()
+        {
+            ArchiveId = e.ArchiveId,
+            ProjectName = e.ProjectName,
+            AgentId = e.AgentId,
+            AgentUrl = e.AgentUrl,
+            ArchivedUtc = e.ArchivedUtc,
+            PurgeAfterUtc = e.PurgeAfterUtc
+        };
+
+    private static VolumeBackupPolicyDto ToDto(VolumeBackupPolicyEntity e) =>
+        new()
+        {
+            Id = e.Id,
+            ProjectName = e.ProjectName,
+            VolumeNamePattern = e.VolumeNamePattern,
+            MinCopies = e.MinCopies,
+            MaxCopies = e.MaxCopies,
+            MinMinutesBetweenBackups = e.MinMinutesBetweenBackups,
+            MinutesCooldownPerGb = e.MinutesCooldownPerGb,
+            MaxCooldownMinutes = e.MaxCooldownMinutes,
+            MinimumFreeDiskMb = e.MinimumFreeDiskMb,
+            Enabled = e.Enabled,
+            ExtraKeyPrefix = e.ExtraKeyPrefix,
+            CreatedUtc = e.CreatedUtc,
+            UpdatedUtc = e.UpdatedUtc
+        };
 
     private static AgentInfo ToAgentInfo(RegisteredAgentEntity a) =>
         new()

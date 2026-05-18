@@ -5,7 +5,7 @@ using Chronos.Master.Application.Abstractions;
 
 namespace Chronos.Master.Api;
 
-/// <summary>API для React UI под <c>/api/v1</c>: граф compose, статус проекта, Traefik, прокси диагностик.</summary>
+/// <summary>API для React UI под <c>/api/v1</c>: граф compose, статус проекта, HAProxy TCP-маршруты, прокси диагностик.</summary>
 public static class UiV1Extensions
 {
     public static WebApplication MapChronosUiV1(this WebApplication app)
@@ -106,60 +106,84 @@ public static class UiV1Extensions
         })
         .WithTags("ui");
 
-        v1.MapGet("/traefik/routes", (
+        v1.MapGet("/haproxy/tcp-routes", async (
             HttpRequest request,
-            IHostEnvironment env,
-            IConfiguration cfg) =>
-        {
-            if (!IsUiAuthorized(request, expectedApiKey))
-                return Results.Unauthorized();
-
-            var dir = cfg["CHRONOS_TRAEFIK_DYNAMIC_DIR"];
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-                return Results.Json(new TraefikRoutesListDto { Directory = dir, Routes = new List<TraefikRouteFileDto>() });
-
-            var routes = Directory.GetFiles(dir, "chronos-route-*.yml")
-                .Select(p => new TraefikRouteFileDto
-                {
-                    FileName = Path.GetFileName(p),
-                    Yaml = File.ReadAllText(p)
-                })
-                .ToList();
-
-            return Results.Json(new TraefikRoutesListDto { Directory = dir, Routes = routes });
-        })
-        .WithTags("ui");
-
-        v1.MapPost("/traefik/routes", async (
-            UpsertTraefikRouteRequest body,
-            HttpRequest request,
-            IReverseProxyConfigurator proxy,
+            IHaproxyTcpRouteRegistry registry,
+            IConfiguration cfg,
             CancellationToken ct) =>
         {
             if (!IsUiAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            if (string.IsNullOrWhiteSpace(body.RouteName) || string.IsNullOrWhiteSpace(body.Rule) ||
-                body.BackendUrls == null || body.BackendUrls.Count == 0)
-                return Results.BadRequest(new { error = "routeName, rule and backendUrls are required." });
+            var routes = await registry.ListAsync(ct).ConfigureAwait(false);
+            var generatedCfg = await registry.ReadGeneratedCfgAsync(ct).ConfigureAwait(false);
+            int? suggestedBackendPort = null;
+            if (int.TryParse(cfg["CHRONOS_HAPROXY_TCP_SUGGESTED_BACKEND_PORT"], out var sbp) && sbp is >= 1 and <= 65535)
+                suggestedBackendPort = sbp;
 
-            await proxy.UpsertHttpRouteAsync(body.RouteName.Trim(), body.Rule.Trim(), body.BackendUrls, ct)
-                .ConfigureAwait(false);
-            return Results.Ok(new { ok = true });
+            int? listenMin = null;
+            int? listenMax = null;
+            if (int.TryParse(cfg["CHRONOS_HAPROXY_LISTEN_PORT_MIN"], out var lmn) && lmn is >= 1 and <= 65535)
+                listenMin = lmn;
+            if (int.TryParse(cfg["CHRONOS_HAPROXY_LISTEN_PORT_MAX"], out var lmx) && lmx is >= 1 and <= 65535)
+                listenMax = lmx;
+            if (listenMin is null || listenMax is null || listenMin > listenMax)
+            {
+                listenMin = null;
+                listenMax = null;
+            }
+
+            return Results.Json(new HaproxyTcpRoutesApiDto
+            {
+                DynamicDirectory = registry.DynamicDirectory,
+                MasterPublicHost = cfg["CHRONOS_MASTER_PUBLIC_HOST"]?.Trim(),
+                Routes = routes.ToList(),
+                GeneratedCfg = generatedCfg,
+                SuggestedBackendHost = cfg["CHRONOS_HAPROXY_TCP_SUGGESTED_BACKEND_HOST"]?.Trim(),
+                SuggestedBackendPort = suggestedBackendPort,
+                ListenPortMin = listenMin,
+                ListenPortMax = listenMax
+            });
         })
         .WithTags("ui");
 
-        v1.MapDelete("/traefik/routes/{routeName}", async (
-            string routeName,
+        v1.MapPost("/haproxy/tcp-routes", async (
+            AddHaproxyTcpRouteRequest body,
             HttpRequest request,
-            IReverseProxyConfigurator proxy,
+            IHaproxyTcpRouteRegistry registry,
             CancellationToken ct) =>
         {
             if (!IsUiAuthorized(request, expectedApiKey))
                 return Results.Unauthorized();
 
-            await proxy.RemoveRouteAsync(routeName, ct).ConfigureAwait(false);
-            return Results.Ok(new { ok = true });
+            if (registry.DynamicDirectory == null)
+                return Results.BadRequest(new { error = "CHRONOS_HAPROXY_DYNAMIC_DIR is not set on Master." });
+
+            if (string.IsNullOrWhiteSpace(body.BackendHost) || body.BackendPort is < 1 or > 65535)
+                return Results.BadRequest(new { error = "backendHost and backendPort (1–65535) are required." });
+
+            var add = await registry.TryAddAsync(body, ct).ConfigureAwait(false);
+            if (!add.Ok)
+                return Results.BadRequest(new { error = add.Error ?? "Could not add route." });
+
+            return Results.Json(add.Route);
+        })
+        .WithTags("ui");
+
+        v1.MapDelete("/haproxy/tcp-routes/{id}", async (
+            string id,
+            HttpRequest request,
+            IHaproxyTcpRouteRegistry registry,
+            CancellationToken ct) =>
+        {
+            if (!IsUiAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            if (registry.DynamicDirectory == null)
+                return Results.BadRequest(new { error = "CHRONOS_HAPROXY_DYNAMIC_DIR is not set on Master." });
+
+            var ok = await registry.RemoveAsync(id, ct).ConfigureAwait(false);
+            return ok ? Results.Ok(new { ok = true }) : Results.NotFound();
         })
         .WithTags("ui");
 
@@ -238,13 +262,6 @@ public sealed class GraphFromYamlRequest
     public string ComposeYaml { get; set; } = string.Empty;
 }
 
-public sealed class UpsertTraefikRouteRequest
-{
-    public string RouteName { get; set; } = string.Empty;
-    public string Rule { get; set; } = string.Empty;
-    public List<string> BackendUrls { get; set; } = new();
-}
-
 public sealed class FluentPreviewRequest
 {
     public string? Code { get; set; }
@@ -259,16 +276,22 @@ public sealed class FluentPreviewResponse
     public string? Error { get; init; }
 }
 
-public sealed class TraefikRoutesListDto
+public sealed class HaproxyTcpRoutesApiDto
 {
-    public string? Directory { get; init; }
-    public List<TraefikRouteFileDto> Routes { get; init; } = new();
-}
+    public string? DynamicDirectory { get; init; }
+    public string? MasterPublicHost { get; init; }
+    public List<HaproxyTcpRouteDto> Routes { get; init; } = new();
+    public string? GeneratedCfg { get; init; }
 
-public sealed class TraefikRouteFileDto
-{
-    public string FileName { get; init; } = string.Empty;
-    public string Yaml { get; init; } = string.Empty;
+    /// <summary>Подсказка для UI: куда HAProxy в Docker должен проксировать (DNS сервиса агента, не 127.0.0.1).</summary>
+    public string? SuggestedBackendHost { get; init; }
+
+    public int? SuggestedBackendPort { get; init; }
+
+    /// <summary>Если заданы оба — авто listen только в этом диапазоне (как в docker compose ports у HAProxy).</summary>
+    public int? ListenPortMin { get; init; }
+
+    public int? ListenPortMax { get; init; }
 }
 
 public sealed class ProjectFullStatusDto

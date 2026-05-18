@@ -1,0 +1,408 @@
+\section{Архитектура и проектирование платформы Chronos}
+
+Настоящая глава даёт целостное описание архитектуры: от декомпозиции на три основных проекта до подсистем маршрутизации, резервного копирования томов и наблюдаемости. Детали реализации API и развёртывания раскрываются в следующей главе.
+
+\subsection{Три ключевых проекта репозитория}
+
+Исходный код Chronos организован в виде нескольких артефактов сборки; для архитектурного анализа выделяют три несущих столпа.
+
+\textbf{Chronos.Core} --- библиотека (.NET), не привязанная к конкретному хосту. Она инкапсулирует доменную модель Docker Compose (сервисы, сети, тома, секреты, расширения), предоставляет Fluent API для пошагового построения конфигурации, генерацию YAML, best-effort разбор существующего \texttt{docker-compose.yml} обратно в билдер, валидацию, локальный запуск через CLI Docker Compose, а также HTTP-клиент для публикации и управления проектами на удалённом агенте. Сюда же относятся вспомогательные подсистемы: упаковка \emph{артефактов деплоя} (файлы и каталоги, включаемые в архив при выкладке), декларативные проверки, исполнение кодовых jobs и тестов, ограничения безопасности для выполняемых команд.
+
+\textbf{Chronos.Agent} --- конвейеризированное серверное приложение (ASP.NET Core), разворачиваемое на машине с Docker Engine. Оно имеет доступ к \texttt{docker.sock} (или эквивалентному API), хранит каталог опубликованных проектов, по запросу выполняет \texttt{docker compose up/down}, отдаёт статус контейнеров и потоки логов, формирует архивы и потоковые снимки томов, обрабатывает фоновый планировщик проверок и при старте регистрируется на Master с периодическим heartbeat.
+
+\textbf{Chronos.Master} --- центральный узел кластера: хранит состояние в PostgreSQL (агенты, аудит, размещение проектов, политики и состояние бэкапов томов, архивные проекты и др.), отдаёт REST API для агентов и для UI, проксирует запросы интерфейса к агентам, опционально ведёт реестр TCP-маршрутов и генерирует фрагмент конфигурации для HAProxy. Клиентская часть \textbf{Chronos.Master.Web} (React) собирается в статику и раздаётся Master из \texttt{wwwroot}.
+
+Четвёртый модуль, \textbf{Chronos.Master.Web}, архитектурно является фронтендом Master и в дальнейшем при упоминании «Master'' в контексте UI/API подразумевается связка backend+SPA.
+
+\subsection{Общая схема взаимодействия и публикация}
+
+\begin{figure}[!ht]
+\centering
+\resizebox{0.9\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum width=2.95cm},
+  actor/.style={box, minimum width=2.85cm},
+  arrow/.style={->, thick}
+]
+  \node[actor] (dev) {Разработчик/CI};
+  \node[box, right=16mm of dev] (core) {Chronos.Core:\\Compose\-Builder + Publish\-Async};
+  \node[box, right=16mm of core] (agent) {Chronos.Agent:\\save files + \texttt{docker compose up}};
+
+  \node[box, below=16mm of agent] (stack) {Запущенный\\compose-стек\\(контейнеры)};
+  \node[box, below=16mm of core] (master) {Chronos.Master:\\метаданные, аудит, proxy};
+  \node[actor, below=16mm of master] (ui) {UI пользователя};
+
+  \draw[arrow] (dev) -- (core);
+  \draw[arrow] (core) -- (agent);
+  \draw[arrow] (agent) -- (stack);
+  \draw[arrow] (agent) -- node[midway, sloped, font=\footnotesize, inner sep=2pt, yshift=-2.5mm] {статус/логи} (master);
+  \draw[arrow] (ui) -- node[midway, sloped, font=\footnotesize, inner sep=2pt, yshift=2.5mm, align=center] {запросы\\операций} (master);
+  \draw[arrow] (master) to[bend left=14] node[midway, below, sloped, font=\footnotesize, inner sep=2pt, yshift=-1mm] {proxy start/stop} (agent);
+\end{tikzpicture}%
+}
+\caption{Общий процесс публикации и управления проектом через Chronos}
+\label{fig:publish-flow}
+\end{figure}
+
+Типовой поток данных следующий.
+
+\begin{enumerate}[leftmargin=1.5cm]
+  \item Разработчик или CI формирует описание проекта в коде через \texttt{Compose\-Builder} либо готовит YAML вручную.
+  \item Операция публикации (\texttt{Publish\-Async} и родственные методы в Core) упаковывает compose\-файл и артефакты деплоя в передаваемый на агент архив и отправляет HTTP\-запрос на Agent.
+  \item Agent сохраняет файлы в своём рабочем каталоге, при необходимости обновляет метаданные в локальной БД агента.
+  \item Команды жизненного цикла снова идут через HTTP к Agent; Master может участвовать в сценарии «кластерной'' публикации, маршрутизируя вызовы к нужному агенту.
+  \item UI пользователя обращается к Master; запросы, требующие данных с конкретного узла (логи, граф сервисов), проксируются Master к соответствующему Agent.
+\end{enumerate}
+
+Таким образом, Master не заменяет Docker на узле: он координирует метаданные и политики, а исполнение остаётся на Agent.
+
+\subsection{Стратегии резервного копирования томов}
+
+Подсистема бэкапа томов строится вокруг трёх элементов: \emph{политика} на Master, \emph{исполнение снимка} на Agent и \emph{объектное хранилище} S3-совместимого типа (в т.ч. MinIO).
+
+\textbf{Политика} задаёт имя проекта, шаблон имени тома (\texttt{VolumePatternMatcher}), максимальное число успешных копий в бакете (\texttt{MaxCopies}), признак включения и опциональный дополнительный префикс ключей. Состояние последнего бэкапа (время, оценка объёма) хранится в БД Master для адаптации интервала и проверки диска.
+
+\textbf{Фоновый сервис} \texttt{VolumeReplicationHostedService} на стороне лидирующего экземпляра Master периодически обходит включённые политики. Перед запуском снимка запрашиваются метрики свободного места на диске агента; при недостатке места копия пропускается. По префиксу ключей в бакете выполняется листинг существующих объектов; лишние версии удаляются согласно \texttt{MaxCopies}. Решение о новом снимке учитывает интервал политики и размер предыдущей передачи.
+
+\textbf{Agent} предоставляет эндпоинт снимка тома в объектное хранилище: запускается процесс архивации данных Docker-тома проекта (с поддержкой сжатия gzip), поток stdout направляется в загрузчик S3 (\texttt{VolumeTarS3Uploader}). Альтернативно доступны сценарии выдачи tar потоком клиенту и загрузки по предписанному URL --- это покрывает кастомные пайплайны.
+
+Итоговая стратегия --- \emph{централизованно инициируемые, дедуплицируемые по числу копий снимки с проверкой ресурсов узла}, без блокировки основного API на длительное время за счёт асинхронности фоновой задачи Master.
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.93\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=2.2mm]},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum width=3.05cm},
+  arrow/.style={->, thick}
+]
+\node[box] (db) {БД Master\\(политики, \texttt{VolumeBackupState})};
+\node[box, below=10mm of db] (svc) {\texttt{VolumeReplication}\\ \texttt{HostedService} (фон)};
+\node[box, below=10mm of svc] (chk) {Запрос свободного\\места на Agent};
+\node[box, below=10mm of chk] (s3a) {S3: листинг\\по префиксу, \texttt{MaxCopies}, prune};
+
+% Агент и S3-объект — отдельной колонкой, чтобы линии не пересекались
+\node[box, right=26mm of chk] (ag) {Chronos.Agent:\\ \texttt{docker} снимок тома};
+\node[box, right=18mm of svc] (post) {HTTP POST\\ \texttt{/projects/.../}\\ \texttt{snapshot/to-object-storage}};
+\node[box, below=10mm of ag] (up) {Поток tar(gzip)\\$\rightarrow$ \texttt{VolumeTarS3Uploader}};
+\node[box, below=10mm of up] (s3b) {Объект S3\\(ключ: проект/том/время)};
+
+\draw[arrow] (db) -- (svc);
+\draw[arrow] (svc) -- (chk);
+\draw[arrow] (chk) -- (s3a);
+\draw[arrow] (s3a) to[out=25,in=260] (post.south);
+\draw[arrow] (post) -- node[midway, above, sloped, font=\footnotesize, inner sep=2pt, yshift=1mm] {по URL агента} (ag);
+\draw[arrow] (ag) -- (up);
+\draw[arrow] (up) -- (s3b);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Взаимодействие компонентов при резервном копировании тома в объектное хранилище}
+\label{fig:backup-flow}
+\end{figure}
+
+Рисунок~\ref{fig:backup-flow} показывает основной поток: решение о запуске принимает Master (с учётом политики, состояния и диска), исполнение снимка и загрузка байтов выполняются на агенте, метаданные копий хранятся в S3-совместимом бакете. Пунктирные альтернативы (выдача tar клиенту, загрузка по внешнему presigned URL) в схеме не показаны, но поддерживаются отдельными endpoint-ами агента.
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.93\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=2.2mm]},
+  lbl/.style={font=\scriptsize, inner sep=2pt},
+  actor/.style={draw, rounded corners=2pt, align=center, inner sep=6pt, minimum height=10mm, minimum width=2.75cm},
+  every edge/.style={draw, thick, ->}
+]
+\node[actor] (ui) {UI / оператор};
+\node[actor, right=26mm of ui] (api) {Master API\\(политики)};
+\node[actor, right=26mm of api] (db2) {PostgreSQL};
+\node[actor, below=24mm of ui] (m) {Фоновый цикл\\Master};
+\node[actor, below=24mm of api] (a) {Agent};
+\node[actor, below=24mm of db2] (s3) {MinIO / S3};
+\path (ui) edge node[lbl, midway, above=4mm, sloped, align=center] {создать/\\изменить политику} (api);
+\path (api) edge (db2);
+\path (m) edge[bend left=16] node[lbl, pos=0.28, above=1mm, font=\footnotesize, inner sep=1pt] {читает политики} (db2);
+\path (m) edge node[lbl, midway, above=3mm, font=\footnotesize, inner sep=1pt] {POST снимка} (a);
+\path (a) edge[bend left=12] node[lbl, midway, above, sloped, font=\footnotesize, inner sep=2pt, yshift=1mm] {объект бэкапа} (s3);
+\path (m) edge[bend right=48, looseness=1.08] node[lbl, pos=0.58, below, sloped, align=center, inner sep=2pt, yshift=-1mm] {листинг /\\удаление лишних} (s3);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Роли узлов при управляемом бэкапе: оператор и UI, Master (политика и оркестрация), Agent (снимок), хранилище}
+\label{fig:backup-roles}
+\end{figure}
+
+\subsection{Маршрутизация TCP и роль Master}
+
+Внешние клиенты, подключающиеся по TCP к опубликованным сервисам на хостах агентов, не должны зависеть от внутренней топологии Docker. В Chronos для этого используется HAProxy: Master ведёт реестр маршрутов (\texttt{IHaproxyTcpRouteRegistry}), для каждого маршрута задаются listen-порт (или автоматический выбор из разрешённого диапазона) и адрес backend (часто \texttt{host.docker.internal:PORT} в bridge-сценарии Docker Desktop).
+
+Процедура добавления маршрута включает валидацию портов, проверку конфликтов, сохранение JSON-реестра и генерацию текстового фрагмента \texttt{chronos-tcp.cfg}. Отдельный shell-скрипт в compose-стенде отслеживает изменение файла и посылает HAProxy сигнал перезагрузки, что избавляет оператора от ручного SIGHUP.
+
+Если переменная окружения с каталогом динамической конфигурации не задана, реестр заменяется заглушкой: остальная функциональность кластера сохраняется.
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.93\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=2.2mm]},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum width=2.75cm},
+  arrow/.style={->, thick}
+]
+  \node[box] (cli) {Клиент\\(TCP)};
+  \node[box, right=18mm of cli] (hap) {HAProxy:\\listen на портах из\\ \texttt{chronos-tcp.cfg}};
+  \node[box, right=18mm of hap] (be) {Backend:\\ \texttt{host.docker.internal:PORT}\\ адрес на хосте агента};
+  \node[box, below=14mm of be] (svc) {Контейнерный сервис\\на агенте};
+  \node[box, above=20mm of hap] (mast) {Master:\\генерация cfg и\\перезагрузка HAProxy};
+
+  \draw[arrow] (cli) -- (hap);
+  \draw[arrow] (hap) -- node[midway, below=2.5mm, font=\footnotesize, inner sep=2pt, align=center] {TCP\\соединение} (be);
+  \draw[arrow] (be) -- (svc);
+  \draw[arrow] (mast.south) -- node[midway, left, xshift=-1mm, font=\footnotesize, inner sep=3pt, align=right] {SIGHUP/\\reload} (hap.north);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Работа TCP-маршрутизации: Master управляет конфигурацией HAProxy, клиент подключается к listen, трафик уходит на backend агента}
+\label{fig:tcp-routing-runtime}
+\end{figure}
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.88\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=2.2mm]},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum width=2.85cm},
+  arrow/.style={->, thick}
+]
+  \node[box] (ui) {UI/оператор\\добавляет маршрут};
+  \node[box, right=14mm of ui] (api) {Master API\\валидация и запись\\в реестр};
+  \node[box, right=14mm of api] (cfg) {Генерация\\ \texttt{chronos-tcp.cfg}\\(динамика)};
+  \node[box, below=14mm of cfg] (dyn) {Директория\\динамической конфигурации};
+  \node[box, below=14mm of dyn] (hap) {HAProxy:\\перезагрузка\\и активный listen};
+
+  \draw[arrow] (ui) -- (api);
+  \draw[arrow] (api) -- (cfg);
+  \draw[arrow] (cfg) -- (dyn);
+  \draw[arrow] (dyn) -- (hap);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Добавление TCP-маршрута: UI вызывает Master, Master обновляет динамический конфиг и инициирует reload HAProxy}
+\label{fig:tcp-routing-add}
+\end{figure}
+
+\subsection{Работа агента с контейнерами и связь с Master}
+
+Agent не «подменяет'' собой Docker Scheduler: он вызывает штатный \texttt{docker compose} с параметрами проекта. Отслеживание состояния выполняется через команды статуса и через пользовательские \emph{декларативные проверки} в манифесте: часть из них может выполняться сразу после старта (\texttt{OnStartup}), часть --- по интервалу в фоновом планировщике (\texttt{SchedulerHostedService}). Критичные проваленные проверки могут инициировать перезапуск сервиса, что задаёт политику самовосстановления на уровне compose-сервиса.
+
+С Master агент связывается при старте (регистрация) и далее heartbeat-сообщениями; Master помечает узлы как активные или устаревшие по TTL. Это основа для отображения топологии в UI и для выбора URL агента при политиках бэкапа.
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.93\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=2.2mm]},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum width=2.85cm},
+  arrow/.style={->, thick}
+]
+  \node[box] (ag) {Agent:\\register + heartbeat};
+  \node[box, right=30mm of ag] (mast) {Master:\\актуальность TTL + политика};
+  \node[box, below=18mm of ag] (db) {PostgreSQL:\\агенты, размещения, аудит};
+  \node[box, below=18mm of mast] (ui) {UI:\\просмотр и операции};
+
+  \node[box, right=22mm of ui] (proxy) {Прокси:\\Master → Agent};
+
+  \draw[arrow] (ag.north east) to[bend left=24] node[pos=0.5, above=1mm, font=\footnotesize, inner sep=2pt] {\texttt{/agents/register}} (mast.north west);
+  \draw[arrow] (ag.south east) to[bend right=24] node[pos=0.5, below=1mm, font=\footnotesize, inner sep=2pt] {\texttt{/agents/heartbeat}} (mast.south west);
+  \draw[arrow] (mast) -- (db);
+  \draw[arrow] (ui) -- (mast);
+  \draw[arrow] (mast.south east) to[out=-32,in=135] node[pos=0.38, xshift=3mm, font=\footnotesize, inner sep=3pt, align=left] {start/stop,\\логи} (proxy.north west);
+  \draw[arrow] (proxy) to[out=155,in=-32] (ag.south east);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Взаимодействие Master и Agent: регистрация/heartbeat и проксирование операций}
+\label{fig:master-agent-flow}
+\end{figure}
+
+\subsection{Декларативные проверки и артефакты деплоя}
+
+\textbf{Декларативные проверки} задаются в манифесте сервиса (например, HTTP-проверка, ожидание порта) и выполняются на агенте через \texttt{DeclarativeCheckRunner}: часть сценариев запускается сразу после старта compose, часть --- по расписанию в \texttt{SchedulerHostedService}. У проверки есть уровень критичности: при провале критичной проверки возможен перезапуск сервиса.
+
+\textbf{Артефакты деплоя} (\texttt{DeployArtifact}) позволяют включить в публикуемый пакет файлы и каталоги с машины сборки (тестовые данные, скрипты, результаты CI). При публикации они упаковываются в tar вместе с compose (\texttt{DeployArtifactTarWriter}), поэтому на агенте проект оказывается самодостаточным.
+
+\subsection{Кодовые интеграционные тесты (\texttt{[Test]}) и периодические job-ы (\texttt{[Job]})}
+
+Важная особенность Chronos --- возможность \textbf{прикрепить собственные тесты и фоновые задания непосредственно к compose-сервису}, который разворачивается на агенте. Логика живёт в отдельной .NET-сборке (или в том же решении), публикуется вместе с артефактами деплоя и указывается в Fluent-описании сервиса, поэтому проверки версионируются в Git рядом с приложением.
+
+\textbf{Связка с \texttt{ServiceBuilder}.} В цепочке описания сервиса вызываются методы \texttt{UseTests<\allowbreak TTests>()} / \texttt{UseTests(params Type[])} и \texttt{UseJobs<\allowbreak TJobs>()} / \texttt{UseJobs(params Type[])} (см. \texttt{ServiceBuilder} в Chronos.Core): для каждого переданного типа рефлексией сканируются методы с атрибутами \texttt{[Test]} и \texttt{[Job]}, в модель сервиса добавляются записи \texttt{CodeTestEntry} и \texttt{CodeJobEntry} с путём к сборке относительно корня публикуемого проекта. После \texttt{PublishAsync} агент получает и compose, и DLL, и манифест с перечислением тестов/job-ов для данного сервиса.
+
+Отдельная подсистема Chronos.Core позволяет автору инфраструктуры написать \emph{обычный C\#-код}, который выполняется уже на агенте в контексте развёрнутого проекта: с доступом к рабочему каталогу compose, имени проекта и \emph{имени сервиса}, HTTP-клиенту и обёрткам над \texttt{docker compose}/\texttt{docker exec}.
+
+\textbf{Кодовые тесты.} Метод помечается атрибутом \texttt{[Test]} (тип \texttt{TestAttribute} в пространстве имён \texttt{Chronos.Core}). Допустимая сигнатура --- \texttt{Task} или \texttt{Task<CodeTestOutcome>}; параметры метода --- только \texttt{ComposeTestContext} и/или \texttt{CancellationToken}. В атрибуте задаются: строковый \texttt{Id}, критичность (\texttt{Critical}/\texttt{Warning}), признак \texttt{OnStartup}, опциональный \texttt{IntervalMinutes} для повторных запусков, \texttt{Order} (меньше --- раньше в очереди). Контекст \texttt{ComposeTestContext} даёт \texttt{ExecInServiceAsync} (команда внутри контейнера выбранного сервиса) и \texttt{RunComposeAsync} (вызов compose с хоста агента).
+
+На агенте \texttt{CodeTestRunner} загружает сборку по пути из манифеста, находит тип и метод, при необходимости создаёт экземпляр класса, вызывает метод и учитывает критичность при решении о перезапуске сервиса.
+
+\begin{lstlisting}[style=code,caption={Пример кодового теста с атрибутом \texttt{[Test]} (сканирование и вызов на агенте)}]
+using Chronos.Core;
+
+namespace SampleTests;
+
+/// <summary>Пример кодового теста: HTTP с хоста, где крутится compose (LocalTester / агент).</summary>
+public sealed class NginxTest
+{
+    [Test]
+    public async Task<CodeTestOutcome> RespondsOn8080(ComposeTestContext ctx, CancellationToken cancellationToken = default)
+    {
+        using var response = await ctx.Http.GetAsync("http://127.0.0.1:8080/", cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            return CodeTestOutcome.Fail($"HTTP {(int)response.StatusCode}");
+
+        return CodeTestOutcome.Ok();
+    }
+}
+\end{lstlisting}
+
+\textbf{Периодические job-ы.} Методы с атрибутом \texttt{[Job]} (\texttt{JobAttribute}) оформляются так же, с контекстом \texttt{ComposeJobContext} и возвратом \texttt{Task} / \texttt{Task<CodeJobOutcome>}. Типичное применение --- периодическая обслуживающая работа внутри уже запущенного стека (ротация логов, фоновая синхронизация), а не замена внешнему cron на хосте. Исполнение --- \texttt{CodeJobRunner}.
+
+\begin{figure}[!ht]
+\vspace{2mm}
+\centering
+\resizebox{0.93\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=2mm]},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=4.5pt},
+  w/.style={minimum width=2.55cm}
+]
+\node[box, w] (fb) {Fluent\\ \texttt{Service(...)}};
+\node[box, w, right=10mm of fb] (ut) {\texttt{UseTests<T>()}\\ \texttt{UseJobs<T>()}};
+\node[box, w, right=10mm of ut] (mn) {Манифест\\сервиса};
+\node[box, w, below=10mm of fb] (pub) {\texttt{Publish}};
+\node[box, w, right=10mm of pub] (ag) {Agent};
+\node[box, w, right=10mm of ag] (run) {\texttt{CodeTestRunner}\\ \texttt{CodeJobRunner}};
+\draw[->, thick] (fb) -- (ut);
+\draw[->, thick] (ut) -- (mn);
+\draw[->, thick] (fb) -- (pub);
+\draw[->, thick] (mn.south) -- ++(0,-4mm) -| (pub.north);
+\draw[->, thick] (pub) -- node[above, inner sep=2pt] {HTTP} (ag);
+\draw[->, thick] (ag) -- (run);
+\end{tikzpicture}%
+}%
+\vspace{3mm}
+\caption{Прикрепление сборок с \texttt{[Test]} / \texttt{[Job]} к сервису и исполнение на агенте}
+\label{fig:test-job-pipeline}
+\end{figure}
+
+Рисунок~\ref{fig:test-job-pipeline} подчёркивает, что тесты и job-ы не «внешний скрипт'', а часть описания сервиса, доставляемая на узел в одном пакете с compose.
+
+Таким образом, разработчик может выразить сложную проверку или обслуживающую задачу программно, не ограничиваясь декларативными проверками YAML. Результаты последних запусков агент добавляет в диагностический JSON; Master отдаёт их в UI (рис.~\ref{fig:ui-project-detail} в главе реализации).
+
+\subsection{Связка тестов, job-ов и пользовательского интерфейса}
+
+На стороне \texttt{ProjectDetailPage} (React) список \texttt{recentTests} и \texttt{recentJobs} разбирается из диагностики и показывается в виде таблицы с типом записи (test/job), идентификатором, сообщением и временем. Это снимает необходимость вручную подключаться к хосту агента для первичной диагностики после деплоя.
+
+\subsection{Модуль Chronos.Core: Fluent API, YAML и обратная реконструкция}
+
+Центральный тип --- \texttt{ComposeBuilder}. Цепочка вызовов вида \texttt{new ComposeBuilder().WithVersion(...).Service(...).WithPort(...)} накапливает объекты доменной модели и в конце может сгенерировать строку YAML (\texttt{GenerateYaml}) или сохранить файл.
+
+\begin{lstlisting}[style=code,caption={Пример сборки compose-проекта через Fluent API \texttt{ComposeBuilder}}]
+var compose = new ComposeBuilder()
+    .WithProjectName("chronos-mvp-test")
+    .AddNetwork("backend")
+    .AddVolume("pg_data")
+    .AddVolume("redis_data")
+
+    .AddService(s => s
+        .WithName("postgres")
+        .UseImage("postgres:16-alpine")
+        .AddEnvironment("POSTGRES_USER", "chronos")
+        .AddEnvironment("POSTGRES_PASSWORD", "chronos")
+        .AddEnvironment("POSTGRES_DB", "chronos_app")
+        .AddPort(55432, 5432)
+        .AddVolume("pg_data", "/var/lib/postgresql/data")
+        .DependsOn())
+
+    .AddService(s => s
+        .WithName("redis")
+        .UseImage("redis:7-alpine")
+        .AddPort(56379, 6379)
+        .AddVolume("redis_data", "/data"))
+
+    .AddService(s => s
+        .WithName("adminer")
+        .UseImage("adminer:4")
+        .AddPort(58080, 8080)
+        .DependsOn("postgres"))
+
+    .AddService(s => s
+        .WithName("nginx")
+        .UseImage("nginx:alpine")
+        .AddPort(58081, 80)
+        .DependsOn("postgres", "redis"));
+
+var composePublisher = compose.Build();
+\end{lstlisting}
+
+\textbf{Разбор существующего compose.} Класс \texttt{ComposeYamlParser} выполняет разбор YAML в объекты билдера (подход best-effort: не каждое поле спецификации Compose может быть отражено в модели). Методы \texttt{ComposeBuilder.FromYaml} и \texttt{LoadFromAgentAsync} позволяют импортировать файл с диска или непосредственно с агента, что поддерживает сценарий «подтянуть то, что уже развернуто, и продолжить правки в коде''.
+
+\textbf{Реконструкция Fluent-кода.} Для отладки и round-trip в билдере реализована генерация текста вызовов API по текущему состоянию модели (см. комментарии в \texttt{ComposeBuilder} к реконструкции): это облегчает сравнение исходного YAML и эквивалентного программного описания.
+
+\textbf{Удалённое управление.} Тип \texttt{HttpDeployAgent} инкапсулирует HTTP-контракт агента: публикация, старт/стоп, список проектов, получение compose. Высокоуровневые методы билдера связывают генерацию YAML с этими вызовами.
+
+\subsection{Модуль Chronos.Agent: исполнение и тома}
+
+Agent конфигурируется путём к корню приложений, параметрами Docker Compose CLI, URL Master и ключами API. Основные группы endpoint-ов: проекты (список, загрузка/скачивание compose, жизненный цикл), логи, тома и снимки, служебная информация для Master.
+
+Снимок тома использует блокировку на имя тома, чтобы не допустить параллельных несогласованных чтений. Режим \texttt{to-object-storage} использует учётные данные объектного хранилища из конфигурации агента; при отсутствии конфигурации возвращается отказ с пояснением.
+
+\subsection{Модуль Chronos.Master: данные, UI и HAProxy}
+
+Master использует \texttt{ChronosMasterDbContext} (Entity Framework Core) и PostgreSQL как единственный источник правды для метаданных кластера. API разделено на машинно-ориентированные контракты для агентов и UI-версию (\texttt{UiV1Extensions}), а также опциональную песочницу для исполнения Fluent-сценариев без записи в продукционные данные.
+
+Генерация HAProxy описана выше; важно подчеркнуть разделение: Master не принимает внешний TCP-трафик сам по себе в типовом стенде --- он лишь обновляет конфигурацию, а HAProxy слушает порты.
+
+\subsection{Сущности данных и связи}
+
+Ниже перечислены основные группы сущностей, на которых держится логика Master; точные имена таблиц и полей определяются миграциями EF Core, здесь зафиксирована семантика.
+
+\textbf{Агенты и доступность.} Регистрация агента фиксирует идентификатор, базовый URL и время последнего heartbeat. По TTL неактивные записи могут удаляться фоновой задачей: это влияет на выбор URL при политиках бэкапа и на отображение топологии в UI.
+
+\textbf{Проекты и размещение.} Размещение (\emph{placement}) связывает логический проект с конкретным агентом: где лежит каталог compose, куда направлять команды жизненного цикла. Архив проектов позволяет хранить метаданные снятых с эксплуатации конфигураций без удаления истории.
+
+\textbf{Аудит.} Операции, инициированные пользователем или API (публикация, изменение маршрутов, удаление), фиксируются в журнале аудита с временной меткой и инициатором. Это снижает неопределённость при разборе инцидентов «кто и когда изменил маршрут''.
+
+\textbf{Политики и состояние бэкапа томов.} Политика описывает проект, шаблон имени тома, интервал, \texttt{MaxCopies} и признак активности. Состояние последнего успешного снимка хранится для адаптации расписания и проверки диска на агенте перед новым запуском.
+
+\textbf{TCP-маршруты.} Реестр маршрутов хранит listen-порт (или признак автоматического выбора), целевой backend (хост и порт на стороне агента), идентификаторы для генерации фрагмента \texttt{chronos-tcp.cfg}. Консистентность с файлом на диске обеспечивается атомарной записью и внешним reload HAProxy.
+
+\subsection{Наблюдаемость: Loki и Grafana}
+
+Компоненты Master и Agent настраиваются на отправку структурированных логов по HTTP в Loki (модуль \texttt{LokiHttpLogging}). На стенде из \texttt{docker-compose.yml} поднимаются Loki и Grafana; преднастроенные панели облегчают поиск ошибок API, сбоев фоновых служб и повторяющихся предупреждений при публикации.
+
+\textbf{Лейблы и поиск.} Рекомендуется задавать лейблы уровня приложения (\texttt{app}, \texttt{instance}, \texttt{environment}), чтобы в LogQL отфильтровать поток: например, запрос вида \texttt{\{app="chronos-master"\}} ограничивает выборку логами мастер-узла; добавление условия по уровню (\texttt{| json | level="Error"}) ускоряет разбор инцидентов после деплоя.
+
+\textbf{Ограничения подхода.} Loki не заменяет трассировку распределённых запросов: связка «запрос UI $\rightarrow$ прокси Master $\rightarrow$ Agent'' по одному trace-id в MVP не сквозная. Для дипломного стенда достаточно корреляции по времени и по идентификаторам в тексте сообщения; развитие --- в сторону OpenTelemetry при появлении требований.
+
+\subsection{Безопасность, модель угроз и ограничения MVP}
+
+\textbf{Контур доверия.} Агент доверяет Master при регистрации и heartbeat; Master доверяет агенту при проксировании запросов UI, если выбранный агент авторизован ключом API. Внешний клиент TCP не аутентифициуется Chronos на уровне приложения --- граница безопасности для публикуемых портов задаётся сетевыми ACL и политикой организации.
+
+\textbf{Секреты и логи.} Пароли подключения к БД и ключи API не должны попадать в stdout в открытом виде; в коде предусмотрено редактирование чувствительных подстрок при логировании. Полная интеграция с Vault или аналогами в объёме работы не реализована --- секреты задаются переменными окружения и файлами конфигурации стенда.
+
+\textbf{Исполнение на агенте.} Доступ агента к \texttt{docker.sock} эквивалентен высоким привилегиям на хосте; снижение риска достигается ограничением списка допустимых команд и сетевой изоляцией узла, а не заменой модели Docker.
+
+\textbf{Ограничения версии.} Single-master без горячего failover; упрощённая авторизация по сравнению с корпоративным RBAC; корректность TCP-маршрутов зависит от согласованности host/container портов и режима сети Docker (в частности, доступность \texttt{host.docker.internal} на стороне HAProxy).
+
+\subsection{Выводы по главе}
+
+Спроектированная архитектура разделяет описание среды (Core), исполнение (Agent) и координацию (Master), добавляя сквозные подсистемы маршрутизации, бэкапа томов и наблюдаемости. Такая декомпозиция соответствует поставленным требованиям и подготавливает читателя к описанию реализации и испытаний.

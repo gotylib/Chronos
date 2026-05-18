@@ -1,8 +1,9 @@
-// Chronos.Master — центральный API: PostgreSQL, координация агентов, Traefik,
+// Chronos.Master — центральный API: PostgreSQL, координация агентов, HAProxy TCP-маршруты (опционально),
 // REST для UI и прокси к агентам; статика SPA в wwwroot/ui (fallback /ui).
 using Chronos.Master.Api;
 using Chronos.Master.Application.Abstractions;
 using Chronos.Master.Application.Services;
+using Chronos.Master.Infrastructure.Logging;
 using Chronos.Master.Infrastructure.Persistence;
 using Chronos.Master.Infrastructure.Proxy;
 using Microsoft.EntityFrameworkCore;
@@ -17,21 +18,32 @@ builder.Services.AddScoped<ChronosMasterDbContext>(sp =>
     sp.GetRequiredService<IDbContextFactory<ChronosMasterDbContext>>().CreateDbContext());
 
 builder.Services.AddScoped<IMasterPersistence, MasterPersistenceService>();
-// Лидерство и фоновые задачи только у одной реплики Master; Traefik — запись YAML при заданном каталоге.
+// Лидерство и фоновые задачи только у одной реплики Master; HAProxy — запись chronos-tcp.cfg при заданном каталоге.
 builder.Services.AddSingleton<ILeaderElectionService, LeaderElectionService>();
 builder.Services.AddHostedService<LeaderElectionHostedService>();
 builder.Services.AddHostedService<VolumeReplicationHostedService>();
-builder.Services.AddSingleton<IReverseProxyConfigurator>(sp =>
+builder.Services.AddHostedService<ArchivedProjectPurgeHostedService>();
+builder.Services.AddSingleton<IHaproxyTcpRouteRegistry>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
-    var dir = cfg["CHRONOS_TRAEFIK_DYNAMIC_DIR"];
+    var dir = cfg["CHRONOS_HAPROXY_DYNAMIC_DIR"];
     if (string.IsNullOrWhiteSpace(dir))
-        return new NoOpReverseProxyConfigurator();
-    return new TraefikFileReverseProxyConfigurator(
-        dir,
-        sp.GetRequiredService<ILogger<TraefikFileReverseProxyConfigurator>>());
+        return new NoOpHaproxyTcpRouteRegistry();
+    return new HaproxyTcpRouteRegistry(
+        dir.Trim(),
+        sp.GetRequiredService<ILogger<HaproxyTcpRouteRegistry>>(),
+        cfg);
 });
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("MasterApiProxy", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(15);
+});
+builder.Services.AddHttpClient(nameof(VolumeReplicationHostedService), client =>
+{
+    client.Timeout = TimeSpan.FromHours(6);
+});
+MasterLokiLoggingRegistration.TryAddMasterLoki(builder);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {

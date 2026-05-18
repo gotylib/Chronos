@@ -1,16 +1,15 @@
 ﻿namespace Chronos.Agent.Domain.Entities;
 
-public class ServiceEntity(
-    string serviceName,
-    string dockerComposeFile,
-    string dockerComposeFilePath,
-    List<string> imageNames,
-    List<string> volumeNames)
+/// <summary>Снимок последнего успешно записанного compose для ключа деплоя (<see cref="ServiceName"/>).</summary>
+public sealed class ServiceEntity
 {
     public long Id { get; set; }
-    public string ServiceName { get; set; } = serviceName;
-    public string DockerComposeFile { get; set; } = dockerComposeFile;
-    public string DockerComposeFilePath { get; set; } = dockerComposeFilePath;
-    public List<string> ImageNames { get; set; } = imageNames;
-    public List<string> VolumeNames {get; set; } = volumeNames;
+
+    /// <summary>Логический ключ: глобальный маркер Chronos или имя проекта на диске.</summary>
+    public string ServiceName { get; set; } = "";
+
+    public string DockerComposeFile { get; set; } = "";
+    public string DockerComposeFilePath { get; set; } = "";
+    public List<string> ImageNames { get; set; } = new();
+    public List<string> VolumeNames { get; set; } = new();
 }

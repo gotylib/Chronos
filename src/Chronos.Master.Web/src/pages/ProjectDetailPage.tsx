@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  archiveProjectCluster,
   downloadVolumeSnapshot,
   getProjectVolumes,
   getProjectFullStatus,
@@ -9,8 +10,11 @@ import {
   projectRestart,
   projectStop,
   registerVolumeArchive,
+  saveProjectCompose,
+  type ClusterActionResult,
   type DeployStatus,
   type ProjectFullStatus,
+  type RedeployConflictPayload,
   type VolumeArchiveRecord
 } from "../api/client";
 
@@ -24,6 +28,7 @@ type RunRow = {
 };
 
 export function ProjectDetailPage() {
+  const navigate = useNavigate();
   const { name } = useParams<{ name: string }>();
   const projectName = name ? decodeURIComponent(name) : "";
 
@@ -35,6 +40,8 @@ export function ProjectDetailPage() {
   const [archives, setArchives] = useState<VolumeArchiveRecord[]>([]);
   const [archivePath, setArchivePath] = useState("");
   const [archiveVolume, setArchiveVolume] = useState("");
+  const [composeDraft, setComposeDraft] = useState("");
+  const [composeTouched, setComposeTouched] = useState(false);
 
   const load = useCallback(() => {
     if (!projectName) return;
@@ -60,6 +67,26 @@ export function ProjectDetailPage() {
       clearInterval(id2);
     };
   }, [load, loadVolumes]);
+
+  useEffect(() => {
+    setComposeTouched(false);
+    setComposeDraft("");
+  }, [projectName]);
+
+  useEffect(() => {
+    if (!data?.composeOk || composeTouched) return;
+    setComposeDraft(data.composeYaml);
+  }, [data?.composeYaml, data?.composeOk, composeTouched]);
+
+  async function runWithRedeployConfirm(
+    action: (confirm: boolean) => Promise<ClusterActionResult>
+  ): Promise<ClusterActionResult> {
+    const first = await action(false);
+    if (first.status !== 409) return first;
+    const p = first.body as RedeployConflictPayload;
+    if (!window.confirm(formatRedeployConflict(p))) return first;
+    return action(true);
+  }
 
   const runs: RunRow[] = [];
   if (data?.diagnosticsOk && data.diagnosticsJson) {
@@ -109,9 +136,20 @@ export function ProjectDetailPage() {
   async function doStart() {
     setBusy("start");
     setActionResult(null);
+    setError(null);
     try {
-      const res = await projectStart(projectName);
-      setActionResult(res);
+      const res = await runWithRedeployConfirm((confirm) =>
+        projectStart(projectName, { composeYaml: composeDraft, confirm })
+      );
+      if (res.status === 409) {
+        setActionResult("Изменение compose отменено.");
+        return;
+      }
+      if (!res.ok) {
+        setError(clusterActionErrorText(res));
+        return;
+      }
+      setActionResult(res.body as DeployStatus);
       await load();
       await loadVolumes();
     } catch (e) {
@@ -139,11 +177,70 @@ export function ProjectDetailPage() {
   async function doRestart(rv: boolean) {
     setBusy("restart");
     setActionResult(null);
+    setError(null);
     try {
-      const res = await projectRestart(projectName, rv);
-      setActionResult(res);
+      const res = await runWithRedeployConfirm((confirm) =>
+        projectRestart(projectName, rv, { composeYaml: composeDraft, confirm })
+      );
+      if (res.status === 409) {
+        setActionResult("Изменение compose отменено.");
+        return;
+      }
+      if (!res.ok) {
+        setError(clusterActionErrorText(res));
+        return;
+      }
+      setActionResult(res.body as DeployStatus);
       await load();
       await loadVolumes();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doArchiveProject() {
+    const msg =
+      `Архивировать проект «${projectName}»?\n\n` +
+      `Будет выполнен compose down без удаления именованных Docker-томов; каталог проекта на агенте уйдёт в архив примерно на 7 дней (можно восстановить или дождаться автоудаления).\n` +
+      `Запись о размещении в Master будет удалена до восстановления.`;
+    if (!window.confirm(msg)) return;
+    setBusy("archive");
+    setActionResult(null);
+    setError(null);
+    try {
+      const payload = await archiveProjectCluster(projectName);
+      setActionResult(
+        `Проект заархивирован. Archive ID: ${payload.archiveId}. Удаление каталога с диска после ${payload.purgeAfterUtc}.`
+      );
+      navigate("../archived");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doSaveCompose() {
+    setBusy("save-compose");
+    setActionResult(null);
+    setError(null);
+    try {
+      const res = await runWithRedeployConfirm((confirm) =>
+        saveProjectCompose(projectName, composeDraft, confirm)
+      );
+      if (res.status === 409) {
+        setActionResult("Сохранение compose отменено.");
+        return;
+      }
+      if (!res.ok) {
+        setError(clusterActionErrorText(res));
+        return;
+      }
+      setComposeTouched(false);
+      setActionResult("Compose сохранён на агенте.");
+      await load();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -209,6 +306,14 @@ export function ProjectDetailPage() {
             className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
           >
             Refresh
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => void doArchiveProject()}
+            className="rounded-lg border border-rose-900/60 bg-rose-950/35 px-3 py-2 text-xs font-medium text-rose-100 hover:bg-rose-900/35 disabled:opacity-50"
+          >
+            Archive…
           </button>
         </div>
       </div>
@@ -382,13 +487,38 @@ export function ProjectDetailPage() {
           </section>
 
           <section className="rounded-xl border border-slate-800 bg-slate-950/50">
-            <header className="border-b border-slate-800 px-4 py-3">
-              <h2 className="text-sm font-semibold text-white">Compose file</h2>
-              <p className="text-xs text-slate-500">Текущий `docker-compose.yml`, сохраненный на агенте.</p>
+            <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Compose file</h2>
+                <p className="text-xs text-slate-500">
+                  Редактируйте YAML здесь; Start/Restart отправляют этот текст на агент. При удалении сервисов или томов
+                  система запросит подтверждение.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busy !== null || !data.composeOk}
+                onClick={() => doSaveCompose()}
+                className="shrink-0 rounded-lg border border-emerald-900/60 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-900/40 disabled:opacity-50"
+              >
+                Сохранить на агенте
+              </button>
             </header>
-            <pre className="max-h-[320px] overflow-auto p-4 font-mono text-[11px] leading-relaxed text-emerald-100">
-              {data.composeOk ? data.composeYaml : `Compose not available: ${data.composeYaml || "unknown error"}`}
-            </pre>
+            {!data.composeOk ? (
+              <div className="p-4 font-mono text-[11px] text-red-300">
+                Compose недоступен: {data.composeYaml || "unknown error"}
+              </div>
+            ) : (
+              <textarea
+                value={composeDraft}
+                onChange={(e) => {
+                  setComposeTouched(true);
+                  setComposeDraft(e.target.value);
+                }}
+                spellCheck={false}
+                className="min-h-[320px] w-full resize-y bg-slate-950/80 p-4 font-mono text-[11px] leading-relaxed text-emerald-100 outline-none ring-0 focus:bg-slate-950"
+              />
+            )}
           </section>
 
           <section className="rounded-xl border border-slate-800 bg-slate-950/50">
@@ -423,6 +553,31 @@ function StatusPanel(props: { ok: boolean; raw: string }) {
           <Stat k="In progress" v={s.deploymentInProgress ? "yes" : "no"} />
           <Stat k="Deployment id" v={s.deploymentId ?? "—"} />
         </div>
+        {s.publishedHostPorts?.length ? (
+          <div className="overflow-x-auto">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Published host ports (agent)</div>
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-slate-800 text-slate-500">
+                <tr>
+                  <th className="px-2 py-1">Service</th>
+                  <th className="px-2 py-1">Container port</th>
+                  <th className="px-2 py-1">Requested host</th>
+                  <th className="px-2 py-1">Actual host</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80">
+                {s.publishedHostPorts.map((p, i) => (
+                  <tr key={`${p.serviceName}-${p.containerPort}-${i}`}>
+                    <td className="px-2 py-1 font-mono text-amber-200/90">{p.serviceName}</td>
+                    <td className="px-2 py-1 text-slate-300">{p.containerPort}</td>
+                    <td className="px-2 py-1 text-slate-400">{p.requestedHostPort}</td>
+                    <td className="px-2 py-1 font-mono text-emerald-300">{p.actualHostPort}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
         {s.containers?.length ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -442,9 +597,9 @@ function StatusPanel(props: { ok: boolean; raw: string }) {
               </tbody>
             </table>
           </div>
-        ) : (
+        ) : !s.publishedHostPorts?.length ? (
           <div className="text-xs text-slate-500">No container state returned.</div>
-        )}
+        ) : null}
       </div>
     );
   } catch {
@@ -473,4 +628,32 @@ function Stat(props: { k: string; v: string }) {
       <div className="mt-1 font-mono text-sm text-slate-200">{props.v}</div>
     </div>
   );
+}
+
+function formatRedeployConflict(p: RedeployConflictPayload): string {
+  const lines: string[] = [p.message ?? "Изменение compose требует подтверждения."];
+  if (p.removedComposeServices?.length)
+    lines.push(`Из compose будут убраны сервисы: ${p.removedComposeServices.join(", ")}`);
+  if (p.removedNamedVolumes?.length)
+    lines.push(`Именованные тома пропадут из файла: ${p.removedNamedVolumes.join(", ")}`);
+  if (p.imageChanges?.length) {
+    const rows = p.imageChanges.map(
+      (c) =>
+        ` • ${c.serviceName ?? "?"}: ${c.previousImage ?? "—"} → ${c.newImage ?? "—"}`
+    );
+    lines.push(`Образы изменятся:\n${rows.join("\n")}`);
+  }
+  lines.push("\nПродолжить?");
+  return lines.join("\n\n");
+}
+
+function clusterActionErrorText(res: ClusterActionResult): string {
+  const b = res.body;
+  if (typeof b === "string") return b;
+  if (b && typeof b === "object") {
+    const o = b as { error?: unknown; message?: unknown };
+    if (typeof o.error === "string") return o.error;
+    if (typeof o.message === "string") return o.message;
+  }
+  return `${res.status}: ${JSON.stringify(b)}`;
 }

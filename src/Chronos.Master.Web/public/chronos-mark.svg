@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" role="img" aria-label="Chronos">
+  <defs>
+    <marker id="chronos-arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#0b1526"/>
+    </marker>
+    <linearGradient id="chronos-db" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4fc3f7"/>
+      <stop offset="50%" stop-color="#1e6ba8"/>
+      <stop offset="100%" stop-color="#0a1628"/>
+    </linearGradient>
+  </defs>
+  <path d="M 31 66 A 28 28 0 0 1 69 28" stroke="#0b1526" stroke-width="4.2" stroke-linecap="round" marker-end="url(#chronos-arr)"/>
+  <path d="M 69 28 A 28 28 0 0 1 31 66" stroke="#0b1526" stroke-width="4.2" stroke-linecap="round" marker-end="url(#chronos-arr)"/>
+  <path stroke="#0b1526" stroke-width="2.4" stroke-linecap="round" d="M 50 27 v 6 M 31 47 h 6 M 69 47 h -6"/>
+  <circle cx="50" cy="47" r="2.3" fill="#0b1526"/>
+  <path stroke="#0b1526" stroke-width="2.4" stroke-linecap="round" d="M 50 47 V 26"/>
+  <path stroke="#0b1526" stroke-width="3.4" stroke-linecap="round" d="M 50 47 L 60.5 40.5"/>
+  <path fill="#5ec8ea" d="M 37.5 89 L 43.5 89 L 43.5 77 L 37.5 77 Z"/>
+  <path fill="#7dd3fc" d="M 37.5 77 L 43.5 77 L 45.5 74 L 39.5 74 Z"/>
+  <path fill="#1e5a8c" d="M 43.5 89 L 43.5 77 L 45.5 74 L 45.5 86 Z"/>
+  <path fill="url(#chronos-db)" d="M 43.5 89 L 52.5 89 L 52.5 58 L 43.5 58 Z"/>
+  <path fill="#7dd3fc" d="M 43.5 58 L 52.5 58 L 55 54 L 46 54 Z"/>
+  <path fill="#0a1628" opacity="0.92" d="M 52.5 89 L 52.5 58 L 55 54 L 55 84 Z"/>
+  <path fill="#2563eb" d="M 52.5 89 L 61 89 L 61 71 L 52.5 71 Z"/>
+  <path fill="#3b82f6" d="M 52.5 71 L 61 71 L 63 68 L 54.5 68 Z"/>
+  <path fill="#0a1628" d="M 61 89 L 61 71 L 63 68 L 63 85 Z"/>
+</svg>

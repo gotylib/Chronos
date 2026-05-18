@@ -107,6 +107,9 @@ public sealed class VolumeOperationResult
     public string? Error { get; set; }
     public long? BytesTransferred { get; set; }
     public string? SavedPath { get; set; }
+
+    /// <summary>S3/MinIO object key после успешного <c>snapshot/to-object-storage</c>.</summary>
+    public string? ObjectKey { get; set; }
 }
 
 public static class ManifestJson

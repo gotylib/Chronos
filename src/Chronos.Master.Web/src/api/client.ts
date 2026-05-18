@@ -54,6 +54,12 @@ export type DeployStatus = {
   operationPending?: boolean;
   deploymentInProgress?: boolean;
   message?: string;
+  publishedHostPorts?: Array<{
+    serviceName: string;
+    containerPort: number;
+    requestedHostPort: number;
+    actualHostPort: number;
+  }>;
   containers?: Array<{ name: string; state: string }>;
   diagnostics?: {
     recentTests?: Array<{ service: string; testId: string; success: boolean; message?: string; utcTime: string }>;
@@ -91,6 +97,48 @@ export async function getProjects(): Promise<ProjectPlacement[]> {
   return r.json();
 }
 
+export type ArchivedProjectRow = {
+  archiveId: string;
+  projectName: string;
+  agentId: string;
+  agentUrl: string;
+  archivedUtc: string;
+  purgeAfterUtc: string;
+};
+
+export async function listArchivedProjects(): Promise<ArchivedProjectRow[]> {
+  const r = await fetch("/cluster/projects/archived");
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+export type ArchiveProjectAgentPayload = {
+  archiveId: string;
+  projectName: string;
+  archivedUtc: string;
+  purgeAfterUtc: string;
+  retentionDays: number;
+};
+
+export async function archiveProjectCluster(projectName: string): Promise<ArchiveProjectAgentPayload> {
+  const r = await fetch(`/cluster/projects/${encodeURIComponent(projectName)}/archive`, { method: "POST" });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || `${r.status}`);
+  return JSON.parse(text) as ArchiveProjectAgentPayload;
+}
+
+export async function restoreArchivedProject(archiveId: string): Promise<void> {
+  const r = await fetch(`/cluster/projects/archived/${encodeURIComponent(archiveId)}/restore`, {
+    method: "POST"
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
+
+export async function purgeArchivedProjectNow(archiveId: string): Promise<void> {
+  const r = await fetch(`/cluster/projects/archived/${encodeURIComponent(archiveId)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await r.text());
+}
+
 export async function getProjectFullStatus(projectName: string): Promise<ProjectFullStatus> {
   const r = await fetch(`/api/v1/cluster/projects/${encodeURIComponent(projectName)}/full-status`);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -110,32 +158,64 @@ export async function postComposeGraph(composeYaml: string): Promise<ComposeGrap
   return r.json();
 }
 
-export type TraefikRoutesList = {
-  directory?: string | null;
-  routes: { fileName: string; yaml: string }[];
+export type HaproxyTcpRoute = {
+  id: string;
+  name: string;
+  backendHost: string;
+  backendPort: number;
+  listenPort: number;
+  agentId?: string | null;
+  projectName?: string | null;
+  createdUtc: string;
 };
 
-export async function getTraefikRoutes(): Promise<TraefikRoutesList> {
-  const r = await fetch("/api/v1/traefik/routes");
+export type HaproxyTcpRoutesResponse = {
+  dynamicDirectory?: string | null;
+  masterPublicHost?: string | null;
+  routes: HaproxyTcpRoute[];
+  generatedCfg?: string | null;
+  /** Подсказка с Master (Docker): DNS сервиса агента вместо 127.0.0.1 внутри HAProxy. */
+  suggestedBackendHost?: string | null;
+  suggestedBackendPort?: number | null;
+  listenPortMin?: number | null;
+  listenPortMax?: number | null;
+};
+
+export async function getHaproxyTcpRoutes(): Promise<HaproxyTcpRoutesResponse> {
+  const r = await fetch("/api/v1/haproxy/tcp-routes");
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
-export async function upsertTraefikRoute(body: {
-  routeName: string;
-  rule: string;
-  backendUrls: string[];
-}): Promise<void> {
-  const r = await fetch("/api/v1/traefik/routes", {
+export async function addHaproxyTcpRoute(body: {
+  name?: string;
+  backendHost: string;
+  backendPort: number;
+  listenPort?: number | null;
+  agentId?: string | null;
+  projectName?: string | null;
+}): Promise<HaproxyTcpRoute> {
+  const r = await fetch("/api/v1/haproxy/tcp-routes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!r.ok) throw new Error(await r.text());
+  const text = await r.text();
+  if (!r.ok) {
+    let msg = text || `${r.status}`;
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (typeof j?.error === "string" && j.error.length > 0) msg = j.error;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(msg);
+  }
+  return JSON.parse(text) as HaproxyTcpRoute;
 }
 
-export async function deleteTraefikRoute(routeName: string): Promise<void> {
-  const r = await fetch(`/api/v1/traefik/routes/${encodeURIComponent(routeName)}`, { method: "DELETE" });
+export async function deleteHaproxyTcpRoute(id: string): Promise<void> {
+  const r = await fetch(`/api/v1/haproxy/tcp-routes/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!r.ok) throw new Error(await r.text());
 }
 
@@ -218,17 +298,70 @@ export async function projectStop(projectName: string, removeVolumes: boolean): 
   return readJsonOrText(r) as Promise<DeployStatus | string>;
 }
 
-export async function projectRestart(projectName: string, removeVolumes: boolean): Promise<DeployStatus | string> {
-  const r = await fetch(
-    `/cluster/projects/${encodeURIComponent(projectName)}/restart?removeVolumes=${removeVolumes}`,
-    { method: "POST" }
-  );
-  return readJsonOrText(r) as Promise<DeployStatus | string>;
+export type ClusterActionResult = {
+  status: number;
+  ok: boolean;
+  body: unknown;
+};
+
+export type RedeployConflictPayload = {
+  code?: string;
+  message?: string;
+  removedComposeServices?: string[];
+  removedNamedVolumes?: string[];
+  imageChanges?: Array<{
+    serviceName?: string;
+    previousImage?: string | null;
+    newImage?: string | null;
+  }>;
+};
+
+function buildComposeFormData(composeYaml?: string, confirm?: boolean): FormData {
+  const form = new FormData();
+  if (composeYaml !== undefined) form.set("compose", composeYaml);
+  if (confirm) form.set("confirm", "true");
+  return form;
 }
 
-export async function projectStart(projectName: string): Promise<DeployStatus | string> {
-  const r = await fetch(`/cluster/projects/${encodeURIComponent(projectName)}/start`, { method: "POST" });
-  return readJsonOrText(r) as Promise<DeployStatus | string>;
+export async function projectRestart(
+  projectName: string,
+  removeVolumes: boolean,
+  options?: { composeYaml?: string; confirm?: boolean }
+): Promise<ClusterActionResult> {
+  const form = buildComposeFormData(options?.composeYaml, options?.confirm);
+  const r = await fetch(
+    `/cluster/projects/${encodeURIComponent(projectName)}/restart?removeVolumes=${removeVolumes}`,
+    { method: "POST", body: form }
+  );
+  const body = await readJsonOrText(r);
+  return { status: r.status, ok: r.ok, body };
+}
+
+export async function projectStart(
+  projectName: string,
+  options?: { composeYaml?: string; confirm?: boolean }
+): Promise<ClusterActionResult> {
+  const form = buildComposeFormData(options?.composeYaml, options?.confirm);
+  const r = await fetch(`/cluster/projects/${encodeURIComponent(projectName)}/start`, {
+    method: "POST",
+    body: form
+  });
+  const body = await readJsonOrText(r);
+  return { status: r.status, ok: r.ok, body };
+}
+
+export async function saveProjectCompose(
+  projectName: string,
+  composeYaml: string,
+  confirm?: boolean
+): Promise<ClusterActionResult> {
+  const form = buildComposeFormData(composeYaml, confirm);
+  const r = await fetch(`/cluster/projects/${encodeURIComponent(projectName)}/compose`, {
+    method: "POST",
+    body: form
+  });
+  const body = await readJsonOrText(r);
+  return { status: r.status, ok: r.ok, body };
 }
 
 export async function getProjectVolumes(projectName: string): Promise<string[]> {

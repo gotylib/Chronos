@@ -151,12 +151,26 @@ public sealed class ContainerStatus
     public string State { get; set; } = string.Empty;
 }
 
+/// <summary>Фактический проброс порта на хосте после резолва конфликтов.</summary>
+public sealed class PublishedHostPortBinding
+{
+    public string ServiceName { get; set; } = string.Empty;
+    public int ContainerPort { get; set; }
+    public int RequestedHostPort { get; set; }
+    public int ActualHostPort { get; set; }
+}
+
 /// <summary>Ответ агента на deploy/start/stop: успех, ошибка, контейнеры, отложенное выполнение.</summary>
 public sealed class DeployResult
 {
     public string? DeploymentId { get; set; }
     public bool Success { get; set; }
     public string? Error { get; set; }
+
+    /// <summary>Проброс портов на хосте после автоподбора свободных (если включено на агенте).</summary>
+    public List<PublishedHostPortBinding> PublishedHostPorts { get; set; } = new();
+    
+    public string? NeedConfirm { get; set; }
     public List<ContainerStatus> Containers { get; set; } = new();
     public DiagnosticsSnapshot? Diagnostics { get; set; }
 

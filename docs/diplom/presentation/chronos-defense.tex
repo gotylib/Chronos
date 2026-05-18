@@ -1,0 +1,124 @@
+% !TeX program = xelatex
+% Сборка (из каталога presentation/):
+%   xelatex chronos-defense.tex && xelatex chronos-defense.tex
+% Для защиты ~5–10 минут: ~1 мин на титул и контекст, по 45–60 с на блок.
+\documentclass[aspectratio=169,12pt]{beamer}
+
+\usepackage[russian]{babel}
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{graphicx}
+
+% Шрифты в духе текстовой части ВКР
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+\usefonttheme{serif}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue}
+
+\graphicspath{{../фото/}}
+
+\title{Платформа Chronos}
+\subtitle{Централизованное управление Docker Compose на нескольких узлах}
+\author{Глеб Михалев}
+\institute{Выпускная квалификационная работа}
+\date{2026}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Задача}
+  \begin{itemize}
+    \item Несколько машин с \textbf{Docker}, стек описан в \textbf{Compose} — привычно и достаточно для многих сценариев.
+    \item Полноценный \textbf{Kubernetes} часто избыточен: control plane, экспертиза, стоимость владения.
+    \item \textbf{Панели} (Portainer и др.) удобны для UI, но слабее выражена связка «код сборки / CI $\rightarrow$ та же модель, что на сервере''.
+  \end{itemize}
+  \vfill
+  \centering
+  \textbf{Нужен управляющий контур вокруг Compose без обязательного K8s.}
+\end{frame}
+
+\begin{frame}{Идея Chronos}
+  \textbf{Chronos} — программный комплекс для централизованного управления Compose-проектами на наборе агентов:
+  \begin{itemize}
+    \item единый \textbf{Master} (метаданные, политики, UI);
+    \item \textbf{Agent} на каждом узле с Docker (исполнение \texttt{docker compose});
+    \item библиотека \textbf{Core} для описания и публикации из .NET и CI.
+  \end{itemize}
+  \vfill
+  \begin{block}{Принцип}
+    Docker и Compose не заменяются: Chronos координирует выкладку, наблюдаемость, TCP и бэкапы.
+  \end{block}
+\end{frame}
+
+\begin{frame}{Три опорных компонента}
+  \begin{description}
+    \item[Chronos.Core] Fluent API и YAML, валидация, пакеты деплоя, клиент публикации, тесты и jobs (\texttt{[Test]}, \texttt{[Job]}).
+    \item[Chronos.Agent] ASP.NET Core, \texttt{docker.sock}, каталог проектов, логи, снимки томов, регистрация на Master.
+    \item[Chronos.Master + Web] PostgreSQL, REST, прокси UI к агентам, политики бэкапа, реестр TCP для HAProxy.
+  \end{description}
+\end{frame}
+
+\begin{frame}{Поток публикации (упрощённо)}
+  \begin{enumerate}
+    \item Разработчик или CI: модель в коде (Core) или готовый compose-файл.
+    \item \texttt{PublishAsync} (и родственные): архив манифеста и артефактов $\rightarrow$ HTTP на нужный Agent.
+    \item Agent сохраняет файлы и выполняет жизненный цикл через \texttt{docker compose}.
+    \item Master хранит размещение, аудит; UI опрашивает Master, тяжёлые данные (логи) — прокси к агенту.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Резервное копирование томов}
+  \begin{itemize}
+    \item \textbf{Политика} на Master: проект, шаблон тома, \texttt{MaxCopies}, S3-префикс.
+    \item Фоновый \texttt{VolumeReplicationHostedService}: свободное место на агенте, листинг бакета, prune лишних копий.
+    \item Agent: снимок тома (tar/gzip) $\rightarrow$ загрузка в S3-совместимое хранилище (MinIO и т.\,д.).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{TCP снаружи: HAProxy}
+  \begin{itemize}
+    \item Внешние клиенты подключаются к \textbf{listen-порту HAProxy}; backend — адрес сервиса на хосте агента (например \texttt{host.docker.internal:PORT}).
+    \item Master ведёт JSON-реестр маршрутов и генерирует фрагмент \texttt{chronos-tcp.cfg} (UTF-8 без BOM).
+    \item На стенде: смена файла и сигнал reload HAProxy без ручного редактирования конфигов оператором.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Веб-интерфейс и стенд}
+  \begin{itemize}
+    \item \textbf{Chronos.Master.Web} (React): проекты, агенты, маршруты TCP, песочница YAML/Fluent API и др.
+    \item Контрольный стенд: \texttt{docker-compose} (PostgreSQL, Master, Agent, HAProxy, Loki, Grafana).
+    \item Наблюдаемость: централизованные логи (Loki/Grafana) в связке с агентом и мастером.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Результаты работы}
+  \begin{itemize}
+    \item Реализованы и согласованы Core, Agent, Master и UI под описанный сценарий.
+    \item Подтверждена работоспособность на локальном compose-стенде: публикация, TCP, политики бэкапа, наблюдаемость.
+    \item \textbf{Цель ВКР достигнута}; ограничения MVP (один Master, нагрузочные тесты) зафиксированы как направления развития.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Направления развития}
+  \begin{itemize}
+    \item Отказоустойчивость и масштабирование Master.
+    \item Модель прав доступа и ролей.
+    \item Автоматизация подсказок по портам из состояния compose.
+    \item Расширенные нагрузочные испытания.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \Large Спасибо за внимание!\\[1.2em]
+  \normalsize Вопросы?
+\end{frame}
+
+\end{document}

@@ -1,0 +1,66 @@
+\babel@toc {russian}{}\relax 
+\contentsline {section}{\numberline {1}Введение}{1}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Практическая мотивация}{1}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Идея Chronos}{2}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Цель и задачи работы}{2}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}Объект, предмет и методы}{3}{subsection.1.4}%
+\contentsline {subsection}{\numberline {1.5}Научная новизна и практическая значимость}{3}{subsection.1.5}%
+\contentsline {subsection}{\numberline {1.6}Структура работы}{4}{subsection.1.6}%
+\contentsline {section}{\numberline {2}Анализ предметной области и постановка задачи}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Классы решений для контейнерной оркестрации}{5}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Сравнительный анализ Chronos, Kubernetes и Portainer}{5}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Обзор источников и нормативной базы}{7}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Позиционирование Chronos}{8}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Проблемы исходного сценария Compose-only}{8}{subsection.2.5}%
+\contentsline {subsection}{\numberline {2.6}Функциональные требования}{9}{subsection.2.6}%
+\contentsline {subsection}{\numberline {2.7}Нефункциональные требования}{9}{subsection.2.7}%
+\contentsline {subsection}{\numberline {2.8}Выбор технологического стека}{10}{subsection.2.8}%
+\contentsline {subsection}{\numberline {2.9}Краткая схема модулей (для последующих глав)}{10}{subsection.2.9}%
+\contentsline {subsection}{\numberline {2.10}Постановка задачи}{10}{subsection.2.10}%
+\contentsline {subsection}{\numberline {2.11}Цели, показатели качества и границы MVP}{11}{subsection.2.11}%
+\contentsline {section}{\numberline {3}Архитектура и проектирование платформы Chronos}{11}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Три ключевых проекта репозитория}{12}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Общая схема взаимодействия и публикация}{13}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Стратегии резервного копирования томов}{14}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}Маршрутизация TCP и роль Master}{15}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}Работа агента с контейнерами и связь с Master}{17}{subsection.3.5}%
+\contentsline {subsection}{\numberline {3.6}Декларативные проверки и артефакты деплоя}{17}{subsection.3.6}%
+\contentsline {subsection}{\numberline {3.7}Кодовые интеграционные тесты (\texttt {[Test]}) и периодические job-ы (\texttt {[Job]})}{18}{subsection.3.7}%
+\contentsline {subsection}{\numberline {3.8}Связка тестов, job-ов и пользовательского интерфейса}{20}{subsection.3.8}%
+\contentsline {subsection}{\numberline {3.9}Модуль Chronos.Core: Fluent API, YAML и обратная реконструкция}{20}{subsection.3.9}%
+\contentsline {subsection}{\numberline {3.10}Модуль Chronos.Agent: исполнение и тома}{22}{subsection.3.10}%
+\contentsline {subsection}{\numberline {3.11}Модуль Chronos.Master: данные, UI и HAProxy}{22}{subsection.3.11}%
+\contentsline {subsection}{\numberline {3.12}Сущности данных и связи}{23}{subsection.3.12}%
+\contentsline {subsection}{\numberline {3.13}Наблюдаемость: Loki и Grafana}{23}{subsection.3.13}%
+\contentsline {subsection}{\numberline {3.14}Безопасность, модель угроз и ограничения MVP}{24}{subsection.3.14}%
+\contentsline {subsection}{\numberline {3.15}Выводы по главе}{25}{subsection.3.15}%
+\contentsline {section}{\numberline {4}Реализация программной системы}{25}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Общие принципы реализации}{26}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Точка входа Master}{26}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Точка входа Agent}{26}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Реализация подсистемы TCP-маршрутизации}{26}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.5}Алгоритм реестра TCP-маршрутов}{27}{subsection.4.5}%
+\contentsline {subsection}{\numberline {4.6}Фоновая репликация томов}{27}{subsection.4.6}%
+\contentsline {subsection}{\numberline {4.7}Проксирование запросов UI к агентам}{28}{subsection.4.7}%
+\contentsline {subsection}{\numberline {4.8}Сводная таблица групп UI API}{28}{subsection.4.8}%
+\contentsline {subsection}{\numberline {4.9}Контейнеризация стенда}{28}{subsection.4.9}%
+\contentsline {subsection}{\numberline {4.10}Клиентская часть}{29}{subsection.4.10}%
+\contentsline {subsection}{\numberline {4.11}Экраны веб-интерфейса \texttt {Chronos.Master.Web}}{29}{subsection.4.11}%
+\contentsline {subsection}{\numberline {4.12}Практическая часть: запуск из кода}{30}{subsection.4.12}%
+\contentsline {subsection}{\numberline {4.13}Безопасность}{32}{subsection.4.13}%
+\contentsline {section}{\numberline {5}Экспериментальная проверка и оценка результатов}{34}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Методика испытаний}{34}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Критерии успешности}{34}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Результаты функциональных испытаний}{35}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Ограничения эксперимента}{36}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Обсуждение результатов}{36}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}Направления дальнейшего развития}{36}{subsection.5.6}%
+\contentsline {section}{\numberline {6}Заключение}{37}{section.6}%
+\contentsline {section}{\numberline {A}Приложение А. Фрагменты конфигураций}{38}{appendix.A}%
+\contentsline {subsection}{\numberline {A.1}Фрагмент docker-compose стенда}{38}{subsection.A.1}%
+\contentsline {subsection}{\numberline {A.2}Фрагмент алгоритма выбора listen-порта}{38}{subsection.A.2}%
+\contentsline {section}{\numberline {B}Приложение Б. Каталог сценариев и эксплуатационные материалы}{38}{appendix.B}%
+\contentsline {subsection}{\numberline {B.1}Каталог функциональных сценариев}{39}{subsection.B.1}%
+\contentsline {subsection}{\numberline {B.2}Набор эксплуатационных рисков и мер снижения}{40}{subsection.B.2}%
+\contentsline {subsection}{\numberline {B.3}Расширенный шаблон экспериментальной главы}{41}{subsection.B.3}%
+\contentsline {subsection}{\numberline {B.4}Таблица API-эндпоинтов для документирования}{42}{subsection.B.4}%

@@ -1,0 +1,2 @@
+# Shell scripts for Linux/Docker must use LF. CRLF breaks ash/sh (": not found", "Illegal number: 0").
+*.sh text eol=lf

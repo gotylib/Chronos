@@ -37,7 +37,7 @@ export function DashboardPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-white">Chronos</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Оркестрация compose-проектов по агентам, диагностика тестов и задач, граф сервисов и edge routing (Traefik).
+          Оркестрация compose-проектов по агентам, диагностика тестов и задач, граф сервисов и TCP routing (HAProxy).
         </p>
       </div>
 
@@ -53,12 +53,12 @@ export function DashboardPage() {
           <p className="mt-2 text-xs text-emerald-200/70">Статус, логика тестов и джобов по агентам</p>
         </Link>
         <Link
-          to="../network"
+          to="../routing"
           className="rounded-xl border border-sky-900/40 bg-sky-950/25 p-5 shadow-lg shadow-black/20 transition hover:border-sky-700/60"
         >
-          <div className="text-xs font-medium uppercase tracking-wide text-sky-400/90">Topology</div>
-          <div className="mt-2 text-lg font-semibold text-white">Network map →</div>
-          <p className="mt-2 text-xs text-sky-200/70">Compose services, сети, тома и зависимости</p>
+          <div className="text-xs font-medium uppercase tracking-wide text-sky-400/90">Ingress</div>
+          <div className="mt-2 text-lg font-semibold text-white">TCP routing →</div>
+          <p className="mt-2 text-xs text-sky-200/70">HAProxy listen → backend на агенте</p>
         </Link>
       </div>
 
@@ -67,7 +67,7 @@ export function DashboardPage() {
         <ul className="mt-3 grid gap-2 text-sm text-emerald-300 sm:grid-cols-2">
           <li>
             <Link className="hover:text-emerald-100" to="../routing">
-              Traefik routing
+              TCP routing (HAProxy)
             </Link>
           </li>
           <li>

@@ -1,0 +1,95 @@
+% Скриншоты UI: каталог docs/diplom/фото/ (подпапки по экранам).
+% Список проектов: ui.projects.list/1.jpg  |  Карточка проекта: ui.projects/1.jpg, 2.jpg
+\subsection{Экраны веб-интерфейса \texttt{Chronos.Master.Web}}
+
+Ниже приведены скриншоты экранов в соответствии с маршрутами React (\texttt{App.tsx}). На рисунки даны отсылки в тексте главы~3 и настоящей главы.
+
+\begin{figure}[!ht]
+  \centering
+  \IfFileExists{фото/ui.dashboard/1.png}{%
+    \includegraphics[width=0.94\linewidth]{ui.dashboard/1.png}%
+  }{%
+    \IfFileExists{фото/ui.dashboard/1.jpg}{%
+      \includegraphics[width=0.94\linewidth]{ui.dashboard/1.jpg}%
+    }{%
+      \begin{minipage}{0.94\linewidth}\centering
+        \fcolorbox{black}{gray!8}{%
+          \begin{minipage}{0.92\linewidth}\centering
+            \vspace{1.2cm}
+            {\small\textit{Скриншот дашборда (\texttt{/ui/dashboard}): положите кадр в \texttt{фото/ui.dashboard/1.png} или \texttt{1.jpg}.}}
+            \vspace{1.2cm}
+          \end{minipage}}
+      \end{minipage}%
+    }%
+  }
+  \caption{Главная панель (дашборд) веб-интерфейса}
+  \label{fig:ui-dashboard}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \IfFileExists{фото/ui.agents/1.jpg}{%
+    \includegraphics[width=0.94\linewidth]{ui.agents/1.jpg}%
+  }{%
+    \begin{minipage}{0.94\linewidth}\centering
+      \fcolorbox{black}{gray!8}{%
+        \begin{minipage}{0.92\linewidth}\centering
+          \vspace{1.2cm}
+          {\small\textit{Скриншот списка агентов (\texttt{/ui/agents}): положите кадр в \texttt{фото/ui.agents/1.jpg}.}}
+          \vspace{1.2cm}
+        \end{minipage}}
+    \end{minipage}%
+  }
+  \caption{Список агентных узлов}
+  \label{fig:ui-agents}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \IfFileExists{фото/ui.projects.list/1.jpg}{%
+    \includegraphics[width=0.94\linewidth]{ui.projects.list/1.jpg}%
+  }{%
+    \begin{minipage}{0.94\linewidth}\centering
+      \fcolorbox{black}{gray!8}{%
+        \begin{minipage}{0.92\linewidth}\centering
+          \vspace{1.2cm}
+          {\small\textit{Положите скриншот списка проектов в файл \texttt{фото/ui.projects.list/1.jpg} (отдельно от кадров карточки проекта в \texttt{ui.projects/}).}}
+          \vspace{1.2cm}
+        \end{minipage}}
+    \end{minipage}%
+  }
+  \caption{Список compose-проектов кластера}
+  \label{fig:ui-projects}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.94\linewidth]{ui.projects/1.jpg}\\[2mm]
+  \includegraphics[width=0.94\linewidth]{ui.projects/2.jpg}
+  \caption{Детальная страница проекта}
+  \label{fig:ui-project-detail}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.94\linewidth]{ui.projects.archive/1.jpg}
+  \caption{Архивированные проекты}
+  \label{fig:ui-archived}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.94\linewidth]{ui.routing/1.jpg}\\[2mm]
+  \includegraphics[width=0.94\linewidth]{ui.routing/2.jpg}
+  \caption{Управление TCP-маршрутизацией (HAProxy)}
+  \label{fig:ui-routing}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.94\linewidth]{ui.sandbox/1.jpg}\\[2mm]
+  \includegraphics[width=0.94\linewidth]{ui.sandbox/2.jpg}\\[2mm]
+  \includegraphics[width=0.94\linewidth]{ui.sandbox/3.jpg}
+  \caption{Песочница YAML и Fluent API}
+  \label{fig:ui-sandbox}
+\end{figure}

@@ -22,6 +22,48 @@ namespace Chronos.Master.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Chronos.Master.Domain.Entities.ArchivedProjectEntity", b =>
+                {
+                    b.Property<string>("ArchiveId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("archive_id");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("AgentUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("agent_url");
+
+                    b.Property<DateTimeOffset>("ArchivedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("archived_utc");
+
+                    b.Property<string>("ProjectName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("project_name");
+
+                    b.Property<DateTimeOffset>("PurgeAfterUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purge_after_utc");
+
+                    b.HasKey("ArchiveId");
+
+                    b.HasIndex("ProjectName");
+
+                    b.HasIndex("PurgeAfterUtc");
+
+                    b.ToTable("archived_projects", (string)null);
+                });
+
             modelBuilder.Entity("Chronos.Master.Domain.Entities.AuditLogEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -168,6 +210,98 @@ namespace Chronos.Master.Infrastructure.Persistence.Migrations
                     b.HasKey("AgentId");
 
                     b.ToTable("agents", (string)null);
+                });
+
+            modelBuilder.Entity("Chronos.Master.Domain.Entities.VolumeBackupPolicyEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_utc");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<string>("ExtraKeyPrefix")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("extra_key_prefix");
+
+                    b.Property<int>("MaxCooldownMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_cooldown_minutes");
+
+                    b.Property<int>("MaxCopies")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_copies");
+
+                    b.Property<int>("MinCopies")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_copies");
+
+                    b.Property<int>("MinMinutesBetweenBackups")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_minutes_between_backups");
+
+                    b.Property<int?>("MinimumFreeDiskMb")
+                        .HasColumnType("integer")
+                        .HasColumnName("minimum_free_disk_mb");
+
+                    b.Property<int>("MinutesCooldownPerGb")
+                        .HasColumnType("integer")
+                        .HasColumnName("minutes_cooldown_per_gb");
+
+                    b.Property<string>("ProjectName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("project_name");
+
+                    b.Property<DateTimeOffset>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_utc");
+
+                    b.Property<string>("VolumeNamePattern")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("volume_name_pattern");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectName");
+
+                    b.ToTable("volume_backup_policies", (string)null);
+                });
+
+            modelBuilder.Entity("Chronos.Master.Domain.Entities.VolumeBackupStateEntity", b =>
+                {
+                    b.Property<string>("ProjectName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("project_name");
+
+                    b.Property<string>("VolumeName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("volume_name");
+
+                    b.Property<long?>("LastApproxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_approx_bytes");
+
+                    b.Property<DateTimeOffset?>("LastBackupUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_backup_utc");
+
+                    b.HasKey("ProjectName", "VolumeName");
+
+                    b.ToTable("volume_backup_state", (string)null);
                 });
 
             modelBuilder.Entity("Chronos.Master.Domain.Entities.VolumePlacementEntity", b =>

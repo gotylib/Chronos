@@ -16,6 +16,9 @@ public sealed class ChronosMasterDbContext : DbContext
     public DbSet<ProjectPlacementEntity> ProjectPlacements => Set<ProjectPlacementEntity>();
     public DbSet<VolumePlacementEntity> VolumePlacements => Set<VolumePlacementEntity>();
     public DbSet<LeaderLeaseEntity> LeaderLeases => Set<LeaderLeaseEntity>();
+    public DbSet<VolumeBackupPolicyEntity> VolumeBackupPolicies => Set<VolumeBackupPolicyEntity>();
+    public DbSet<VolumeBackupStateEntity> VolumeBackupStates => Set<VolumeBackupStateEntity>();
+    public DbSet<ArchivedProjectEntity> ArchivedProjects => Set<ArchivedProjectEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -77,6 +80,50 @@ public sealed class ChronosMasterDbContext : DbContext
             e.Property(l => l.HolderInstanceId).HasColumnName("holder_instance_id").HasMaxLength(256);
             e.Property(l => l.AcquiredUtc).HasColumnName("acquired_utc");
             e.Property(l => l.LeaseUntilUtc).HasColumnName("lease_until_utc");
+        });
+
+        modelBuilder.Entity<VolumeBackupPolicyEntity>(e =>
+        {
+            e.ToTable("volume_backup_policies");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.ProjectName).HasColumnName("project_name").HasMaxLength(512);
+            e.Property(x => x.VolumeNamePattern).HasColumnName("volume_name_pattern").HasMaxLength(512);
+            e.Property(x => x.MinCopies).HasColumnName("min_copies");
+            e.Property(x => x.MaxCopies).HasColumnName("max_copies");
+            e.Property(x => x.MinMinutesBetweenBackups).HasColumnName("min_minutes_between_backups");
+            e.Property(x => x.MinutesCooldownPerGb).HasColumnName("minutes_cooldown_per_gb");
+            e.Property(x => x.MaxCooldownMinutes).HasColumnName("max_cooldown_minutes");
+            e.Property(x => x.MinimumFreeDiskMb).HasColumnName("minimum_free_disk_mb");
+            e.Property(x => x.Enabled).HasColumnName("enabled");
+            e.Property(x => x.ExtraKeyPrefix).HasColumnName("extra_key_prefix").HasMaxLength(512);
+            e.Property(x => x.CreatedUtc).HasColumnName("created_utc");
+            e.Property(x => x.UpdatedUtc).HasColumnName("updated_utc");
+            e.HasIndex(x => x.ProjectName);
+        });
+
+        modelBuilder.Entity<VolumeBackupStateEntity>(e =>
+        {
+            e.ToTable("volume_backup_state");
+            e.HasKey(x => new { x.ProjectName, x.VolumeName });
+            e.Property(x => x.ProjectName).HasColumnName("project_name").HasMaxLength(512);
+            e.Property(x => x.VolumeName).HasColumnName("volume_name").HasMaxLength(512);
+            e.Property(x => x.LastBackupUtc).HasColumnName("last_backup_utc");
+            e.Property(x => x.LastApproxBytes).HasColumnName("last_approx_bytes");
+        });
+
+        modelBuilder.Entity<ArchivedProjectEntity>(e =>
+        {
+            e.ToTable("archived_projects");
+            e.HasKey(x => x.ArchiveId);
+            e.Property(x => x.ArchiveId).HasColumnName("archive_id").HasMaxLength(64);
+            e.Property(x => x.ProjectName).HasColumnName("project_name").HasMaxLength(512);
+            e.Property(x => x.AgentId).HasColumnName("agent_id").HasMaxLength(256);
+            e.Property(x => x.AgentUrl).HasColumnName("agent_url").HasMaxLength(2048);
+            e.Property(x => x.ArchivedUtc).HasColumnName("archived_utc");
+            e.Property(x => x.PurgeAfterUtc).HasColumnName("purge_after_utc");
+            e.HasIndex(x => x.ProjectName);
+            e.HasIndex(x => x.PurgeAfterUtc);
         });
     }
 }

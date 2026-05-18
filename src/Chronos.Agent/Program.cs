@@ -7,8 +7,12 @@ using System.Text.Json;
 using Chronos.Agent;
 using Chronos.Agent.Api;
 using Chronos.Agent.Application;
+using Chronos.Agent.Application.Configuration;
 using Chronos.Agent.Domain;
 using Chronos.Agent.Domain.Entities;
+using Chronos.Agent.Infrastructure.EmbeddedMinio;
+using Chronos.Agent.Infrastructure.Logging;
+using Chronos.Agent.Infrastructure.ObjectStorage;
 using Chronos.Agent.Infrastructure.Persistence;
 using Chronos.Core.Safety;
 using Chronos.Core;
@@ -46,6 +50,16 @@ var agentPaths = new AgentPaths
 
 builder.Services.AddSingleton(agentPaths);
 
+var embeddedMinioOutcome = EmbeddedMinioProvisioner.TryEnsureAsync(appPath, dockerExecutable, builder.Configuration, CancellationToken.None)
+    .GetAwaiter()
+    .GetResult();
+if (!string.IsNullOrWhiteSpace(embeddedMinioOutcome.Error))
+    Console.WriteLine($"[agent] Embedded MinIO warning: {embeddedMinioOutcome.Error}");
+
+builder.Services.AddSingleton(_ => VolumeObjectStorageOptions.FromConfiguration(builder.Configuration, embeddedMinioOutcome));
+
+LokiLoggingRegistration.TryAddAgentLoki(builder);
+
 var metadataConnectionString = ResolveAgentMetadataConnection(builder.Configuration, appPath);
 builder.Services.AddDbContext<ChronosAgentDbContext>((sp, opts) =>
 {
@@ -59,6 +73,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(nameof(AgentRoutes));
 builder.Services.AddHttpClient(nameof(SchedulerHostedService));
 builder.Services.AddHostedService<SchedulerHostedService>();
+builder.Services.AddHostedService<Chronos.Agent.Infrastructure.Hosted.ArchivedProjectPurgeHostedService>();
 
 var deploymentLock = new SemaphoreSlim(1, 1);
 var volumeLock = new SemaphoreSlim(2, 2);
@@ -87,19 +102,47 @@ builder.Services.AddSingleton<ExecutionThrottler>(sp =>
 
 var app = builder.Build();
 
+var volumeObjectStorageBootstrap = app.Services.GetRequiredService<VolumeObjectStorageOptions>();
+await VolumeBackupBucketEnsurer.EnsureAsync(volumeObjectStorageBootstrap, CancellationToken.None).ConfigureAwait(false);
+
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var dbMeta = scope.ServiceProvider.GetRequiredService<ChronosAgentDbContext>();
-    if (metadataConnectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
+    try
+    {
+        // Для PostgreSQL и SQLite пытаемся применять EF-миграции автоматически при старте.
         await dbMeta.Database.MigrateAsync().ConfigureAwait(false);
-    else
+    }
+    catch when (!metadataConnectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase))
+    {
+        // Fallback только для legacy SQLite-файлов без истории миграций.
         await dbMeta.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        // EnsureCreated не обновляет схему существующего файла SQLite — добавляем таблицу вручную при необходимости.
+        await EnsureSqliteServicesTableExistsAsync(dbMeta).ConfigureAwait(false);
+    }
+}
+
+static async Task EnsureSqliteServicesTableExistsAsync(ChronosAgentDbContext db)
+{
+    await db.Database.ExecuteSqlRawAsync(
+        """
+        CREATE TABLE IF NOT EXISTS "services" (
+            "Id" INTEGER NOT NULL CONSTRAINT "PK_services" PRIMARY KEY AUTOINCREMENT,
+            "ServiceName" TEXT NOT NULL,
+            "DockerComposeFile" TEXT NOT NULL,
+            "DockerComposeFilePath" TEXT NOT NULL,
+            "ImageNames" TEXT NOT NULL,
+            "VolumeNames" TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_services_ServiceName" ON "services" ("ServiceName");
+        """).ConfigureAwait(false);
 }
 
 var throttler = app.Services.GetRequiredService<ExecutionThrottler>();
 var policy = app.Services.GetRequiredService<ExecutionPolicyOptions>();
+var volumeObjectStorage = app.Services.GetRequiredService<VolumeObjectStorageOptions>();
 // Расширенные маршруты: manifest, артефакты, тома, восстановление — см. AgentRoutes.
-AgentRoutes.MapAgentRoutes(app, agentPaths, expectedApiKey, deploymentLock, volumeLock, throttler, policy);
+AgentRoutes.MapAgentRoutes(app, agentPaths, expectedApiKey, deploymentLock, volumeLock, throttler, policy, volumeObjectStorage);
 
 if (!string.IsNullOrWhiteSpace(masterUrl) && !string.IsNullOrWhiteSpace(agentBaseUrl))
 {

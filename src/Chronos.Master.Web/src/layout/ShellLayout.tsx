@@ -9,8 +9,8 @@ const links: { to: string; label: string }[] = [
   { to: "dashboard", label: "Dashboard" },
   { to: "agents", label: "Agents" },
   { to: "projects", label: "Projects" },
-  { to: "network", label: "Network map" },
-  { to: "routing", label: "Routing" },
+  { to: "projects/archived", label: "Archived projects" },
+  { to: "routing", label: "TCP routing" },
   { to: "sandbox", label: "Sandbox" }
 ];
 
@@ -20,7 +20,9 @@ export function ShellLayout() {
     <div className="flex min-h-screen flex-col bg-slate-950">
       <header className="sticky top-0 z-10 border-b border-slate-800/90 bg-slate-900/90 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-slate-900/75">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-          <span className="font-semibold tracking-tight text-emerald-400">Chronos</span>
+          <span className="text-xl font-semibold tracking-tight text-slate-100">
+            Chronos
+          </span>
           <div className="relative">
             <button
               type="button"
@@ -30,12 +32,12 @@ export function ShellLayout() {
               Menu
             </button>
             {menuOpen ? (
-              <nav className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-700 bg-slate-900/95 p-2 shadow-2xl">
+              <nav className="absolute right-0 mt-2 flex w-56 flex-col gap-1.5 rounded-xl border border-slate-700 bg-slate-900/95 p-2 shadow-2xl">
                 {links.map((l) => (
                   <NavLink
                     key={l.to}
                     to={l.to}
-                    end={l.to === "dashboard"}
+                    end={l.to === "dashboard" || l.to === "projects"}
                     onClick={() => setMenuOpen(false)}
                     className={({ isActive }) =>
                       `block ${nav} ${isActive ? activeNav : "text-slate-300"}`

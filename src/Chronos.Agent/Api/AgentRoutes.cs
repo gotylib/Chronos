@@ -3,7 +3,10 @@ using System.Formats.Tar;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Amazon.S3;
 using Chronos.Agent.Application;
+using Chronos.Agent.Application.Configuration;
+using Chronos.Agent.Infrastructure.ObjectStorage;
 using Chronos.Core;
 
 namespace Chronos.Agent.Api;
@@ -21,7 +24,8 @@ public static class AgentRoutes
         SemaphoreSlim deployLock,
         SemaphoreSlim volumeLock,
         ExecutionThrottler throttler,
-        ExecutionPolicyOptions policy)
+        ExecutionPolicyOptions policy,
+        VolumeObjectStorageOptions volumeObjectStorage)
     {
         _ = throttler;
         _ = policy;
@@ -89,6 +93,18 @@ public static class AgentRoutes
             {
                 deployLock.Release();
             }
+        });
+
+        app.MapGet("/chronos/host-disk", (HttpRequest request) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            if (!HostDiskStats.TryGetDiskSpaceForPath(paths.AppPath, out var freeBytes, out var totalBytes))
+                return Results.Json(new { error = "unable to resolve disk for app path." });
+
+            var root = Path.GetPathRoot(Path.GetFullPath(paths.AppPath));
+            return Results.Json(new { rootPath = root, appPath = paths.AppPath, freeBytes, totalBytes });
         });
 
         app.MapGet("/projects/{projectName}/chronos/diagnostics", async (string projectName, CancellationToken ct) =>
@@ -237,6 +253,127 @@ public static class AgentRoutes
                 }
 
                 return Results.Json(new VolumeOperationResult { Success = true });
+            }
+            finally
+            {
+                volumeLock.Release();
+            }
+        });
+
+        app.MapPost("/projects/{projectName}/volumes/{volumeName}/snapshot/to-object-storage", async (
+            string projectName,
+            string volumeName,
+            HttpRequest request,
+            CancellationToken ct,
+            string? compress = null,
+            string? keyPrefixExtra = null) =>
+        {
+            if (!IsAuthorized(request, expectedApiKey))
+                return Results.Unauthorized();
+
+            if (!volumeObjectStorage.IsComplete)
+            {
+                return Results.Json(
+                    new VolumeOperationResult
+                    {
+                        Success = false,
+                        Error =
+                            "Object storage is not configured. Set CHRONOS_VOLUME_STORAGE_ENABLED=true and SERVICE_URL, ACCESS_KEY, SECRET_KEY, BUCKET."
+                    },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var projectDir = ProjectPaths.GetProjectDirectory(paths.AppPath, projectName);
+            if (!Directory.Exists(projectDir))
+                return Results.NotFound();
+
+            try
+            {
+                ValidateVolumeName(volumeName);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+
+            var gzip = !string.Equals(compress, "none", StringComparison.OrdinalIgnoreCase);
+            var prefix = ObjectStorageLayout.CombinePrefix(volumeObjectStorage.KeyPrefix, keyPrefixExtra);
+            var objectKey = ObjectStorageLayout.BuildBackupObjectKey(prefix, projectName, volumeName, gzip);
+            var contentType = gzip ? "application/gzip" : "application/x-tar";
+
+            await volumeLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                using var proc = StartVolumeBackupProcess(paths, volumeName, gzip);
+                proc.Start();
+                var drainErrTask = proc.StandardError.ReadToEndAsync(ct);
+
+                var cfg = new AmazonS3Config
+                {
+                    ServiceURL = volumeObjectStorage.ServiceUrl.TrimEnd('/'),
+                    ForcePathStyle = volumeObjectStorage.ForcePathStyle,
+                    AuthenticationRegion = "us-east-1"
+                };
+
+                using var s3 = new AmazonS3Client(volumeObjectStorage.AccessKey, volumeObjectStorage.SecretKey, cfg);
+
+                await using (var stdout = proc.StandardOutput.BaseStream)
+                {
+                    var (ok, err, bytes) = await VolumeTarS3Uploader.UploadAsync(
+                            s3,
+                            volumeObjectStorage.BucketName,
+                            objectKey,
+                            stdout,
+                            contentType,
+                            ct)
+                        .ConfigureAwait(false);
+
+                    await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+                    _ = await drainErrTask.ConfigureAwait(false);
+
+                    if (proc.ExitCode != 0)
+                    {
+                        try
+                        {
+                            await s3.DeleteObjectAsync(volumeObjectStorage.BucketName, objectKey, ct).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // best-effort cleanup of partial upload
+                        }
+
+                        return Results.Json(new VolumeOperationResult
+                        {
+                            Success = false,
+                            Error = $"docker backup exited with code {proc.ExitCode}"
+                        });
+                    }
+
+                    if (!ok)
+                    {
+                        try
+                        {
+                            await s3.DeleteObjectAsync(volumeObjectStorage.BucketName, objectKey, ct).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // ignore
+                        }
+
+                        return Results.Json(new VolumeOperationResult { Success = false, Error = err });
+                    }
+
+                    return Results.Json(new VolumeOperationResult
+                    {
+                        Success = true,
+                        ObjectKey = objectKey,
+                        BytesTransferred = bytes
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new VolumeOperationResult { Success = false, Error = ex.Message });
             }
             finally
             {

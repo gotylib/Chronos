@@ -1,0 +1,10 @@
+[
+  {
+    "id": "adc8a774eb724c82b2ca30f6b79aaeff",
+    "name": "chronos-agent:8080",
+    "backendHost": "chronos-agent",
+    "backendPort": 8080,
+    "listenPort": 5002,
+    "createdUtc": "2026-05-03T19:07:59.8579641+00:00"
+  }
+]

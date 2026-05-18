@@ -100,3 +100,14 @@ public sealed class ProjectPlacementInfo
     public string AgentUrl { get; set; } = string.Empty;
     public DateTimeOffset UpdatedUtc { get; set; }
 }
+
+/// <summary>Проект в «мягком» архиве на агенте; после <see cref="PurgeAfterUtc"/> данные удаляются с диска.</summary>
+public sealed class ArchivedProjectInfo
+{
+    public string ArchiveId { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public string AgentId { get; set; } = string.Empty;
+    public string AgentUrl { get; set; } = string.Empty;
+    public DateTimeOffset ArchivedUtc { get; set; }
+    public DateTimeOffset PurgeAfterUtc { get; set; }
+}

@@ -30,8 +30,9 @@
   - умеет запускать/останавливать/перезапускать проект через `docker-compose`
   - отдаёт список проектов и возвращает compose по `projectName`
   - манифест/артефакты/volumes/diagnostics: `AgentRoutes`, `SchedulerHostedService`, `AgentPersistence`
-  - **Метаданные (EF):** метаданные архивов volume в **PostgreSQL** (в Docker: `ConnectionStrings:AgentMetadata`); для локального dev без PG fallback — SQLite в `…/.chronos/metadata.db`.
-  - **Тестовый стек:** [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml) — Postgres (две БД: `chronos_master`, `chronos_agent`), Traefik, `Chronos.Master`, `Chronos.Agent` с `docker.sock`.
+  - **Метаданные (EF):** метаданные архивов volume в **PostgreSQL** (в Docker: `ConnectionStrings:AgentMetadata`); для локального dev без PG fallback — SQLite в `…/.chronos/metadata.db`. На старте агент автоматически применяет миграции (`MigrateAsync`), включая SQLite (с legacy fallback).
+  - **Объектное хранилище:** может сам поднимать embedded MinIO через Docker (если не заданы внешние `CHRONOS_VOLUME_STORAGE_*`).
+  - **Тестовый стек:** [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml) — Postgres (две БД: `chronos_master`, `chronos_agent`), HAProxy (TCP + stats), Loki, Grafana, `Chronos.Master`, `Chronos.Agent` с `docker.sock`.
   - **UI:** [`src/Chronos.Master.Web`](src/Chronos.Master.Web) (React + Tailwind 4, `npm run dev` + прокси на Master).
   - **Zip с GitHub:** [`.github/workflows/chronos-agent-release.yml`](.github/workflows/chronos-agent-release.yml) — `chronos-agent-linux-x64.zip` (только `publish/`, без shell-установщиков); при **Release** прикрепляется к релизу.
 
@@ -46,7 +47,7 @@
 - Docker Compose CLI: поддерживаются и `docker-compose` (v1), и `docker compose` (v2)
 - .NET SDK
 
-### Рекомендуемый способ: Docker (master + agent + обе БД + Traefik)
+### Рекомендуемый способ: Docker (master + agent + обе БД + HAProxy)
 
 Из корня репозитория:
 
@@ -57,6 +58,8 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 - Master: `http://localhost:5000` (миграции EF, PostgreSQL `chronos_master`)
 - Agent: `http://localhost:5001` (миграции EF, PostgreSQL `chronos_agent`, `docker.sock` хоста)
 - UI (встроен в образ Master): `http://localhost:5000/ui`
+- Grafana: `http://localhost:3000` (`admin/admin`)
+- Loki API: `http://localhost:3100`
 - Для отдельной разработки фронта: `cd src/Chronos.Master.Web && npm install && npm run dev` (Vite, `http://localhost:5173/ui`)
 
 ### Классический zip-релиз агента (свой хостинг)
@@ -120,7 +123,7 @@ Web UI: React-приложение в `src/Chronos.Master.Web` (Tailwind 4 + Rea
 - `Agents` — статус агентов (heartbeat cpu/memory/disk)
 - `Projects` / `Project details` — статус проекта, diagnostics (tests/jobs), stop/restart
 - `Network map` — визуальный граф сервисов/сетей/томов из compose
-- `Routing` — управление Traefik file-provider маршрутами
+- `TCP routing` — HAProxy TCP: мастер → listen-порт → бэкенд агента, схема и CRUD маршрутов
 - `Sandbox` — validate YAML, Fluent preview, deploy/publish в кластер
 
 Новые API мастера:
@@ -137,9 +140,9 @@ UI/API v1 (для веб-интерфейса):
 - `POST /api/v1/compose/graph` — построение графа (services/networks/volumes) из compose YAML
 - `GET /api/v1/cluster/projects/{projectName}/diagnostics` — diagnostics агента (`/chronos/diagnostics`)
 - `GET /api/v1/cluster/projects/{projectName}/full-status` — агрегированный статус + diagnostics
-- `GET /api/v1/traefik/routes` — список динамических Traefik route-файлов
-- `POST /api/v1/traefik/routes` — upsert маршрута (`routeName`, `rule`, `backendUrls[]`)
-- `DELETE /api/v1/traefik/routes/{routeName}` — удаление маршрута
+- `GET /api/v1/haproxy/tcp-routes` — список TCP-маршрутов + сгенерированный `chronos-tcp.cfg`
+- `POST /api/v1/haproxy/tcp-routes` — добавить маршрут (`backendHost`, `backendPort`, опционально `listenPort`, `name`, `agentId`)
+- `DELETE /api/v1/haproxy/tcp-routes/{id}` — удаление маршрута
 - `POST /api/v1/sandbox/fluent-preview` — Roslyn preview Fluent-кода (`IBuiltCompose` + validate + YAML preview)
 
 Фичу Fluent sandbox можно включить переменной:
@@ -173,6 +176,16 @@ dotnet run --project "src/Chronos.Agent/Chronos.Agent.csproj" -- --urls http://0
 - `CHRONOS_AGENT_MAX_PARALLEL_TESTS_TOTAL` (default: `20`) — глобальный лимит параллельных исполнений
 - `CHRONOS_AGENT_SENSITIVE_PROJECTS` (optional) — projects, для которых включается whitelist-режим (если указан whitelist)
 - `CHRONOS_AGENT_SENSITIVE_COMMAND_WHITELIST` (optional) — comma-separated подстроки, разрешённые для sensitive projects
+- `CHRONOS_AGENT_EMBEDDED_MINIO_ENABLED` (default: `false`) — включить auto-start embedded MinIO в Docker
+- `CHRONOS_AGENT_EMBEDDED_MINIO_PORT` (default: `9000`) — API порт embedded MinIO
+- `CHRONOS_AGENT_EMBEDDED_MINIO_CONSOLE_PORT` (default: `9001`) — console порт embedded MinIO
+- `CHRONOS_AGENT_EMBEDDED_MINIO_PUBLIC_HOST` (optional) — внешний host:port для формируемых URL
+- `CHRONOS_AGENT_LOKI_PUSH_URL` (optional) — Loki endpoint (`.../loki/api/v1/push`) для отправки логов агента
+
+Master (для логов/бэкапов):
+- `CHRONOS_MASTER_LOKI_PUSH_URL` (optional) — Loki endpoint (`.../loki/api/v1/push`) для логов master
+- `CHRONOS_VOLUME_BACKUP_DEFAULT_MIN_FREE_DISK_MB` (default: `20480`) — минимальный free disk на агенте для запуска backup
+- `CHRONOS_VOLUME_BACKUP_LAST_SNAPSHOT_HEADROOM` (default: `1.0`) — множитель запаса по размеру последнего snapshot
 
 Метрики heartbeat (cpu/memory/disk) вычисляются на агенте и отправляются в master для scheduler/UI.
 

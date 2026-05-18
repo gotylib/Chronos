@@ -1,0 +1,35 @@
+\section{Приложение А. Фрагменты конфигураций}
+
+\subsection{Фрагмент docker-compose стенда}
+
+\begin{lstlisting}[style=code,language={},caption={Ключевые части deploy/docker/docker-compose.yml}]
+services:
+  haproxy:
+    image: haproxy:3.0-alpine
+    entrypoint: ["/bin/sh", "/usr/local/etc/haproxy/run-with-dynamic-reload.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "18404:8404"
+      - "5002-5099:5002-5099"
+
+  chronos-master:
+    environment:
+      CHRONOS_HAPROXY_DYNAMIC_DIR: /haproxy-dynamic
+      CHRONOS_HAPROXY_LISTEN_PORT_MIN: "5002"
+      CHRONOS_HAPROXY_LISTEN_PORT_MAX: "5099"
+      CHRONOS_HAPROXY_TCP_SUGGESTED_BACKEND_HOST: host.docker.internal
+\end{lstlisting}
+
+\subsection{Фрагмент алгоритма выбора listen-порта}
+
+\begin{lstlisting}[style=code,language=C,caption={Логика выделения listen-порта}]
+internal static int? Allocate(int preferred, HashSet<int> reservedByRoutes,
+    int maxScan, int? listenMin, int? listenMax)
+{
+    // 1) нормализация диапазона
+    // 2) перебор candidate = preferred + i
+    // 3) пропуск занятых или невалидных портов
+    // 4) возврат первого подходящего порта
+}
+\end{lstlisting}

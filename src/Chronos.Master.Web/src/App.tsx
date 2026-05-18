@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AgentsPage } from "./pages/AgentsPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { NetworkMapPage } from "./pages/NetworkMapPage";
+import { ArchivedProjectsPage } from "./pages/ArchivedProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { RoutingPage } from "./pages/RoutingPage";
@@ -17,9 +17,9 @@ export function App() {
         <Route path="agents" element={<AgentsPage />} />
         <Route path="projects">
           <Route index element={<ProjectsPage />} />
+          <Route path="archived" element={<ArchivedProjectsPage />} />
           <Route path=":name" element={<ProjectDetailPage />} />
         </Route>
-        <Route path="network" element={<NetworkMapPage />} />
         <Route path="routing" element={<RoutingPage />} />
         <Route path="sandbox" element={<SandboxPage />} />
       </Route>
