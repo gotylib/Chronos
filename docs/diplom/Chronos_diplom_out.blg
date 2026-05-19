@@ -1,9 +1,15 @@
 [0] Config.pm:328> INFO - This is Biber 2.21
 [0] Config.pm:331> INFO - Logfile is 'Chronos_diplom_out.blg'
-[124] biber-MSWIN64:342> INFO - === 
-[164] Biber.pm:421> INFO - Reading 'Chronos_diplom_out.bcf'
-[294] Biber.pm:1002> INFO - Found 0 citekeys in bib section 0
-[310] bbl.pm:676> INFO - Writing 'Chronos_diplom_out.bbl' with encoding 'UTF-8'
-[310] bbl.pm:779> INFO - Output to Chronos_diplom_out.bbl
-[310] Biber.pm:132> WARN - The file 'Chronos_diplom_out.bcf' does not contain any citations!
-[311] Biber.pm:134> INFO - WARNINGS: 1
+[129] biber-MSWIN64:342> INFO - === 
+[173] Biber.pm:421> INFO - Reading 'Chronos_diplom_out.bcf'
+[320] Biber.pm:1002> INFO - Found 14 citekeys in bib section 0
+[337] Biber.pm:4487> INFO - Processing section 0
+[351] Biber.pm:4678> INFO - Looking for bibtex file 'references.bib' for section 0
+[433] bibtex.pm:1713> INFO - LaTeX decoding ...
+[464] bibtex.pm:1519> INFO - Found BibTeX data source 'references.bib'
+[589] UCollate.pm:68> INFO - Overriding locale 'ru-RU' defaults 'variable = shifted' with 'variable = non-ignorable'
+[590] UCollate.pm:68> INFO - Overriding locale 'ru-RU' defaults 'normalization = NFD' with 'normalization = prenormalized'
+[590] Biber.pm:4307> INFO - Sorting list 'none/global//global/global/global' of type 'entry' with template 'none' and locale 'ru-RU'
+[590] Biber.pm:4313> INFO - No sort tailoring available for locale 'ru-RU'
+[606] bbl.pm:676> INFO - Writing 'Chronos_diplom_out.bbl' with encoding 'UTF-8'
+[614] bbl.pm:779> INFO - Output to Chronos_diplom_out.bbl

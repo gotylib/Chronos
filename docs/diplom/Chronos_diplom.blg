@@ -1,5 +1,0 @@
-[0] Config.pm:328> INFO - This is Biber 2.21
-[0] Config.pm:331> INFO - Logfile is 'Chronos_diplom.blg'
-[131] biber-MSWIN64:342> INFO - === 
-[174] Utils.pm:479> ERROR - Chronos_diplom.bcf is malformed, last biblatex run probably failed. Deleted Chronos_diplom.bbl
-[175] Biber.pm:137> INFO - ERRORS: 1

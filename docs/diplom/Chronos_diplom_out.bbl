@@ -16,5 +16,457 @@
   {}
 \endgroup
 
+
+\refsection{0}
+  \datalist[entry]{none/global//global/global/global}
+    \entry{docker_get_started}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=4bd3b392874c74fba4ed57a24eae0ac1}{%
+           family={{Docker Inc.}},
+           familyi={D\bibinitperiod}}}%
+      }
+      \strng{namehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{bibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorbibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authornamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \field{extraname}{1}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Docker overview}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://docs.docker.com/get-started/overview/
+      \endverb
+      \verb{url}
+      \verb https://docs.docker.com/get-started/overview/
+      \endverb
+    \endentry
+    \entry{docker_engine_docs}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=4bd3b392874c74fba4ed57a24eae0ac1}{%
+           family={{Docker Inc.}},
+           familyi={D\bibinitperiod}}}%
+      }
+      \strng{namehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{bibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorbibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authornamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \field{extraname}{2}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Docker Engine documentation}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://docs.docker.com/engine/
+      \endverb
+      \verb{url}
+      \verb https://docs.docker.com/engine/
+      \endverb
+    \endentry
+    \entry{matthias2018docker}{book}{}{}
+      \name{author}{2}{}{%
+        {{hash=445f8a8d3f9c2a97076d6a9690230398}{%
+           family={Matthias},
+           familyi={M\bibinitperiod},
+           given={Karl},
+           giveni={K\bibinitperiod}}}%
+        {{hash=8624669048bd4e495bf6f267d8b4a649}{%
+           family={Kane},
+           familyi={K\bibinitperiod},
+           given={Sean\bibnamedelima P.},
+           giveni={S\bibinitperiod\bibinitdelim P\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Sebastopol, CA}%
+      }
+      \list{publisher}{1}{%
+        {O'Reilly Media}%
+      }
+      \strng{namehash}{1940d728647f672add9f3f9777618ea7}
+      \strng{fullhash}{1940d728647f672add9f3f9777618ea7}
+      \strng{fullhashraw}{1940d728647f672add9f3f9777618ea7}
+      \strng{bibnamehash}{1940d728647f672add9f3f9777618ea7}
+      \strng{authorbibnamehash}{1940d728647f672add9f3f9777618ea7}
+      \strng{authornamehash}{1940d728647f672add9f3f9777618ea7}
+      \strng{authorfullhash}{1940d728647f672add9f3f9777618ea7}
+      \strng{authorfullhashraw}{1940d728647f672add9f3f9777618ea7}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{edition}{2}
+      \field{title}{Docker: Up \& Running}
+      \field{year}{2018}
+    \endentry
+    \entry{boettiger2015docker}{article}{}{}
+      \name{author}{1}{}{%
+        {{hash=b23d21a39d596cb65c7411216d994660}{%
+           family={Boettiger},
+           familyi={B\bibinitperiod},
+           given={Carl},
+           giveni={C\bibinitperiod}}}%
+      }
+      \strng{namehash}{b23d21a39d596cb65c7411216d994660}
+      \strng{fullhash}{b23d21a39d596cb65c7411216d994660}
+      \strng{fullhashraw}{b23d21a39d596cb65c7411216d994660}
+      \strng{bibnamehash}{b23d21a39d596cb65c7411216d994660}
+      \strng{authorbibnamehash}{b23d21a39d596cb65c7411216d994660}
+      \strng{authornamehash}{b23d21a39d596cb65c7411216d994660}
+      \strng{authorfullhash}{b23d21a39d596cb65c7411216d994660}
+      \strng{authorfullhashraw}{b23d21a39d596cb65c7411216d994660}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{ACM SIGOPS Operating Systems Review}
+      \field{number}{1}
+      \field{title}{An introduction to Docker for reproducible research}
+      \field{volume}{49}
+      \field{year}{2015}
+      \field{pages}{71\bibrangedash 79}
+      \range{pages}{9}
+      \verb{doi}
+      \verb 10.1145/2723872.2723882
+      \endverb
+    \endentry
+    \entry{dotnet_docs}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=140864078aeca1c7c35b4beb33c53c34}{%
+           family={{Microsoft}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{bibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorbibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authornamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \field{extraname}{1}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{.NET documentation}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://learn.microsoft.com/dotnet/
+      \endverb
+      \verb{url}
+      \verb https://learn.microsoft.com/dotnet/
+      \endverb
+    \endentry
+    \entry{aspnetcore_docs}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=140864078aeca1c7c35b4beb33c53c34}{%
+           family={{Microsoft}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{bibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorbibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authornamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \field{extraname}{2}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{ASP.NET Core documentation}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://learn.microsoft.com/aspnet/core/
+      \endverb
+      \verb{url}
+      \verb https://learn.microsoft.com/aspnet/core/
+      \endverb
+    \endentry
+    \entry{smith2022modern_web}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=46e7f86b11ade65e293413c9b9884dcf}{%
+           family={Smith},
+           familyi={S\bibinitperiod},
+           given={Steve},
+           giveni={S\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Microsoft Press}%
+      }
+      \strng{namehash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{fullhash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{fullhashraw}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{bibnamehash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{authorbibnamehash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{authornamehash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{authorfullhash}{46e7f86b11ade65e293413c9b9884dcf}
+      \strng{authorfullhashraw}{46e7f86b11ade65e293413c9b9884dcf}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Architecting Modern Web Applications with ASP.NET Core and Azure}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2022}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://learn.microsoft.com/dotnet/architecture/modern-web-apps-azure
+      \endverb
+      \verb{url}
+      \verb https://learn.microsoft.com/dotnet/architecture/modern-web-apps-azure
+      \endverb
+    \endentry
+    \entry{griffiths2021csharp}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=1f33d29f76dc13c6dc61a182fe8a149c}{%
+           family={Griffiths},
+           familyi={G\bibinitperiod},
+           given={Ian},
+           giveni={I\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Manning Publications}%
+      }
+      \strng{namehash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{fullhash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{fullhashraw}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{bibnamehash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{authorbibnamehash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{authornamehash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{authorfullhash}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \strng{authorfullhashraw}{1f33d29f76dc13c6dc61a182fe8a149c}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{edition}{4}
+      \field{title}{C\# in Depth}
+      \field{year}{2021}
+    \endentry
+    \entry{freeman2023proaspnet}{book}{}{}
+      \name{author}{1}{}{%
+        {{hash=3e85ff35ac9460aa6193899e6707ba4a}{%
+           family={Freeman},
+           familyi={F\bibinitperiod},
+           given={Adam},
+           giveni={A\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Apress}%
+      }
+      \strng{namehash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{fullhash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{fullhashraw}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{bibnamehash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{authorbibnamehash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{authornamehash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{authorfullhash}{3e85ff35ac9460aa6193899e6707ba4a}
+      \strng{authorfullhashraw}{3e85ff35ac9460aa6193899e6707ba4a}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Pro ASP.NET Core 7: Develop Cloud-Ready Web Applications Using MVC and Blazor}
+      \field{year}{2023}
+    \endentry
+    \entry{docker_compose_spec}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=4bd3b392874c74fba4ed57a24eae0ac1}{%
+           family={{Docker Inc.}},
+           familyi={D\bibinitperiod}}}%
+      }
+      \strng{namehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{fullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{bibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorbibnamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authornamehash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhash}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \strng{authorfullhashraw}{4bd3b392874c74fba4ed57a24eae0ac1}
+      \field{extraname}{3}
+      \field{sortinit}{5}
+      \field{sortinithash}{20e9b4b0b173788c5dace24730f47d8c}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Compose Specification}
+      \field{urlday}{9}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://docs.docker.com/compose/compose-file/
+      \endverb
+      \verb{url}
+      \verb https://docs.docker.com/compose/compose-file/
+      \endverb
+    \endentry
+    \entry{aspnetcore_minimal_apis}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=140864078aeca1c7c35b4beb33c53c34}{%
+           family={{Microsoft}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{bibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorbibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authornamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \field{extraname}{3}
+      \field{sortinit}{6}
+      \field{sortinithash}{b33bc299efb3c36abec520a4c896a66d}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Minimal APIs in ASP.NET Core}
+      \field{urlday}{19}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://learn.microsoft.com/aspnet/core/fundamentals/minimal-apis
+      \endverb
+      \verb{url}
+      \verb https://learn.microsoft.com/aspnet/core/fundamentals/minimal-apis
+      \endverb
+    \endentry
+    \entry{ef_core_docs}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=140864078aeca1c7c35b4beb33c53c34}{%
+           family={{Microsoft}},
+           familyi={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{fullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{bibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorbibnamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authornamehash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhash}{140864078aeca1c7c35b4beb33c53c34}
+      \strng{authorfullhashraw}{140864078aeca1c7c35b4beb33c53c34}
+      \field{extraname}{4}
+      \field{sortinit}{6}
+      \field{sortinithash}{b33bc299efb3c36abec520a4c896a66d}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Entity Framework Core Documentation}
+      \field{urlday}{9}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://learn.microsoft.com/ef/core/
+      \endverb
+      \verb{url}
+      \verb https://learn.microsoft.com/ef/core/
+      \endverb
+    \endentry
+    \entry{burns2018kubernetes}{book}{}{}
+      \name{author}{3}{}{%
+        {{hash=f81bf4ac2381d4b3bdc662e5d904ceb8}{%
+           family={Burns},
+           familyi={B\bibinitperiod},
+           given={Brendan},
+           giveni={B\bibinitperiod}}}%
+        {{hash=eda44bf2f7c12589ed7065b4a8eb333c}{%
+           family={Beda},
+           familyi={B\bibinitperiod},
+           given={Joe},
+           giveni={J\bibinitperiod}}}%
+        {{hash=1b70b429013629d4ac932743e3ff5f8c}{%
+           family={Hightower},
+           familyi={H\bibinitperiod},
+           given={Kelsey},
+           giveni={K\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {O'Reilly Media}%
+      }
+      \strng{namehash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{fullhash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{fullhashraw}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{bibnamehash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{authorbibnamehash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{authornamehash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{authorfullhash}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \strng{authorfullhashraw}{fabe1c344a19c3b4f0f1336d9f14dced}
+      \field{sortinit}{8}
+      \field{sortinithash}{a231b008ebf0ecbe0b4d96dcc159445f}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{edition}{2}
+      \field{title}{Kubernetes: Up and Running}
+      \field{year}{2018}
+    \endentry
+    \entry{haproxy_docs}{misc}{}{}
+      \name{author}{1}{}{%
+        {{hash=b88aba0d3be4fe07e903f43bfd695911}{%
+           family={{HAProxy Technologies}},
+           familyi={H\bibinitperiod}}}%
+      }
+      \strng{namehash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{fullhash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{fullhashraw}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{bibnamehash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{authorbibnamehash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{authornamehash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{authorfullhash}{b88aba0d3be4fe07e903f43bfd695911}
+      \strng{authorfullhashraw}{b88aba0d3be4fe07e903f43bfd695911}
+      \field{sortinit}{9}
+      \field{sortinithash}{0a5ebc79d83c96b6579069544c73c7d4}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{HAProxy Configuration Manual}
+      \field{urlday}{9}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2026}
+      \field{urldateera}{ce}
+      \verb{urlraw}
+      \verb https://www.haproxy.org/download/
+      \endverb
+      \verb{url}
+      \verb https://www.haproxy.org/download/
+      \endverb
+    \endentry
+  \enddatalist
+\endrefsection
 \endinput
 

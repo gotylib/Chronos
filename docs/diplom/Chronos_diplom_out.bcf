@@ -2373,6 +2373,29 @@
     <bcf:datasource type="file" datatype="bibtex" glob="false">references.bib</bcf:datasource>
   </bcf:bibdata>
   <bcf:section number="0">
+    <bcf:citekey order="1" intorder="1">docker_get_started</bcf:citekey>
+    <bcf:citekey order="1" intorder="2">docker_engine_docs</bcf:citekey>
+    <bcf:citekey order="1" intorder="3">matthias2018docker</bcf:citekey>
+    <bcf:citekey order="1" intorder="4">boettiger2015docker</bcf:citekey>
+    <bcf:citekey order="1" intorder="5">dotnet_docs</bcf:citekey>
+    <bcf:citekey order="1" intorder="6">aspnetcore_docs</bcf:citekey>
+    <bcf:citekey order="1" intorder="7">smith2022modern_web</bcf:citekey>
+    <bcf:citekey order="1" intorder="8">griffiths2021csharp</bcf:citekey>
+    <bcf:citekey order="1" intorder="9">freeman2023proaspnet</bcf:citekey>
+    <bcf:citekey order="2" intorder="1">docker_engine_docs</bcf:citekey>
+    <bcf:citekey order="2" intorder="2">docker_get_started</bcf:citekey>
+    <bcf:citekey order="3" intorder="1">matthias2018docker</bcf:citekey>
+    <bcf:citekey order="4" intorder="1">boettiger2015docker</bcf:citekey>
+    <bcf:citekey order="5" intorder="1">docker_compose_spec</bcf:citekey>
+    <bcf:citekey order="6" intorder="1">dotnet_docs</bcf:citekey>
+    <bcf:citekey order="6" intorder="2">aspnetcore_docs</bcf:citekey>
+    <bcf:citekey order="6" intorder="3">aspnetcore_minimal_apis</bcf:citekey>
+    <bcf:citekey order="6" intorder="4">ef_core_docs</bcf:citekey>
+    <bcf:citekey order="7" intorder="1">griffiths2021csharp</bcf:citekey>
+    <bcf:citekey order="7" intorder="2">freeman2023proaspnet</bcf:citekey>
+    <bcf:citekey order="7" intorder="3">smith2022modern_web</bcf:citekey>
+    <bcf:citekey order="8" intorder="1">burns2018kubernetes</bcf:citekey>
+    <bcf:citekey order="9" intorder="1">haproxy_docs</bcf:citekey>
   </bcf:section>
   <!-- SORTING TEMPLATES -->
   <bcf:sortingtemplate name="none">
